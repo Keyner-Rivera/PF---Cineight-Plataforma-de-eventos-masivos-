@@ -8,7 +8,7 @@ import { CalendarRange, CircleCheck, Clock, CreditCard, Gamepad2, Gem, ListX, Lo
 import { pelicula, sala, finFuncion } from "@/data/catalogo";
 import { PARAMETROS } from "@/data/parametros";
 import { fmtDuracion, fmtFechaLarga, fmtHora } from "@/utils/formato";
-import { quitarTurno, turnoVigente } from "@/utils/turnoCola";
+import { otorgarTurno, quitarTurno, turnoVigente } from "@/utils/turnoCola";
 import { useApp } from "@/store/AppProvider";
 import type { Boleto } from "@/types/cuenta";
 import type { EventoAsientosApi } from "@/types/api";
@@ -87,11 +87,16 @@ export default function PaginaFuncion() {
   const alEvento = useCallback((ev: EventoAsientosApi) => {
     if (ev.tipo === "bloqueado") return;
     const ahora = Date.now();
-    const perdidas = ev.asientos.filter((a) => selRef.current.includes(a) && (ev.tipo === "vendido" || ahora - (bloqueadoEn.current.get(a) ?? 0) > 3000));
+    const definitiva = ev.tipo === "vendido" || ev.tipo === "retirado";
+    const perdidas = ev.asientos.filter((a) => selRef.current.includes(a) && (definitiva || ahora - (bloqueadoEn.current.get(a) ?? 0) > 3000));
     if (!perdidas.length) return;
     setSel((x) => x.filter((a) => !perdidas.includes(a)));
     appRef.current.toast(
-      ev.tipo === "vendido" ? `La butaca ${perdidas.join(", ")} fue vendida.` : `Tu bloqueo de ${perdidas.join(", ")} venció tras ${PARAMETROS.retencionMinutos} min. Vuelve a elegirla si sigue libre.`,
+      ev.tipo === "vendido"
+        ? `La butaca ${perdidas.join(", ")} fue vendida.`
+        : ev.tipo === "retirado"
+          ? `La butaca ${perdidas.join(", ")} quedó fuera de servicio.`
+          : `Tu bloqueo de ${perdidas.join(", ")} venció tras ${PARAMETROS.retencionMinutos} min. Vuelve a elegirla si sigue libre.`,
       "info",
     );
   }, []);
@@ -139,6 +144,12 @@ export default function PaginaFuncion() {
       }
       bloqueadoEn.current.set(a, Date.now());
       setSel((x) => (x.includes(a) ? x : [...x, a]));
+      // Preestreno: bloquear una butaca confirma el turno y el servidor lo extiende a su duración completa.
+      const evento = fn.eventoId;
+      if (evento)
+        ctx.colaConsultar(evento).then((q) => {
+          if (q.ok && q.pos?.turno_habilitado && q.pos.expira) otorgarTurno(evento, Date.parse(q.pos.expira));
+        });
     },
     [id, setCheckout, setAlerta],
   );
@@ -182,7 +193,9 @@ export default function PaginaFuncion() {
   const estadoDe = (a: string): EstadoButaca =>
     miReserva?.asientos.includes(a)
       ? "mio"
-      : occ.vendidos.has(a)
+      : occ.fuera.has(a)
+        ? "fuera"
+        : occ.vendidos.has(a)
         ? "vendida"
         : pendientes.includes(a)
           ? "pendiente"

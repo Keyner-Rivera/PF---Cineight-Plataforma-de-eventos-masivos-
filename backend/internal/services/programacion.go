@@ -36,12 +36,22 @@ func (s *Programacion) Asegurar(ctx context.Context, ahora time.Time) (int, erro
 	return s.repo.ProgramarDias(ctx, dias, domain.Plan)
 }
 
-// Mantener ejecuta Asegurar al arrancar y luego cada hora, hasta que ctx se cancela.
-// Si falla (p. ej. la base de datos todavía arranca, algo habitual en un hosting), reintenta a los 30 s.
+// Mantener aplica las migraciones pendientes, ejecuta Asegurar al arrancar y luego cada hora, hasta que ctx se cancela.
+// Si algo falla (p. ej. la base de datos todavía arranca, algo habitual en un hosting), reintenta a los 30 s.
 func (s *Programacion) Mantener(ctx context.Context) {
+	migrado := false
 	for {
 		espera := time.Hour
-		if n, err := s.Asegurar(ctx, time.Now()); err != nil {
+		var err error
+		if !migrado {
+			if err = s.repo.Migrar(ctx); err == nil {
+				migrado = true
+			}
+		}
+		if err != nil {
+			log.Printf("migración al arrancar (reintento en 30 s): %v", err)
+			espera = 30 * time.Second
+		} else if n, err := s.Asegurar(ctx, time.Now()); err != nil {
 			log.Printf("programación automática (reintento en 30 s): %v", err)
 			espera = 30 * time.Second
 		} else if n > 0 {

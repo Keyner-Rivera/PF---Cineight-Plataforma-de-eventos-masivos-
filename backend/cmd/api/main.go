@@ -58,6 +58,9 @@ func main() {
 	}
 	// Tiempos cortos: si Redis cae, las solicitudes fallan rápido con 503 en lugar de quedarse colgadas.
 	opciones.DialTimeout, opciones.ReadTimeout, opciones.WriteTimeout, opciones.MaxRetries = 2*time.Second, time.Second, time.Second, 1
+	// Pool acotado: los Redis administrados limitan las conexiones (Render Key Value gratuito: 50). Con REDIS_POOL
+	// más las 2 suscripciones (difusión de butacas y vencimientos) la API no pasa de ese límite.
+	opciones.PoolSize = cfg.RedisPool
 	rdb := redis.NewClient(opciones)
 	defer rdb.Close()
 	httpx.ConfiarProxy = cfg.ConfiarProxy
@@ -71,7 +74,7 @@ func main() {
 
 	// Servicios
 	seguridad := services.NuevaSeguridad(recaptcha.Nuevo(cfg.RecaptchaKey, cfg.RecaptchaMin), rd, rd, pg)
-	cola := services.NuevaCola(rd, seguridad, cfg.ColaCapacidad, cfg.ColaTurno)
+	cola := services.NuevaCola(rd, seguridad, pg, rd, cfg.ColaCapacidad, cfg.ColaTurno)
 	asientos := services.NuevoAsientos(pg, rd, cola, cfg.Retencion)
 	cartelera := services.NuevaCartelera(pg, pg, rd, cfg.CacheCartelera)
 	srv := handlers.Servicios{
@@ -82,8 +85,11 @@ func main() {
 		Panel:     services.NuevoPanel(pg, rd, rd),
 		Seguridad: seguridad,
 		Cartelera: cartelera,
+		Butacas:   services.NuevoButacas(pg, asientos, pg, cartelera.InvalidarCartelera),
 	}
 
+	// Una sola suscripción de Redis reparte los cambios de butacas entre todos los mapas abiertos de esta instancia.
+	go rd.IniciarDifusion(ctx)
 	// Los vencimientos de Redis (TTL) se difunden como "liberado" a los mapas abiertos.
 	go asientos.EscucharExpiraciones(ctx)
 	// Hoy y los próximos días siempre tienen funciones, aunque la base de datos se haya creado hace días.

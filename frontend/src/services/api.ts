@@ -3,6 +3,7 @@
 
 import type {
   AsientosApi,
+  ButacaFueraServicioApi,
   CaptchaApi,
   CuentaApi,
   FuncionApi,
@@ -15,6 +16,7 @@ import type {
   ReservaApi,
   SesionApi,
   TriviaApi,
+  MotivoFueraServicio,
   ValidacionApi,
 } from "@/types/api";
 
@@ -84,6 +86,11 @@ export const api = {
   crearPelicula: (datos: Omit<PeliculaApi, "slug" | "poster_url"> & { poster: string; funciones: NuevaFuncionApi[]; creada_por: string }) =>
     pedir<{ slug: string; funciones: string[] }>("/api/peliculas", { method: "POST", body: JSON.stringify(datos) }, 20000),
   programarFuncion: (pelicula: string, f: NuevaFuncionApi) => post<{ codigo: string }>("/api/funciones", { pelicula, ...f }),
+  /** Butacas dañadas o fuera de servicio de una sala: no se venden en ninguna de sus funciones. */
+  fueraServicio: (sala: string) => pedir<ButacaFueraServicioApi[]>(`/api/salas/${seg(sala)}/fuera-servicio`),
+  retirarButaca: (sala: string, asiento: string, motivo: MotivoFueraServicio, por: string) =>
+    post<{ estado: string }>(`/api/salas/${seg(sala)}/fuera-servicio/${seg(asiento)}`, { motivo, por }),
+  habilitarButaca: (sala: string, asiento: string, por: string) => del<{ estado: string }>(`/api/salas/${seg(sala)}/fuera-servicio/${seg(asiento)}?por=${seg(por)}`),
   /** URL absoluta de un recurso de la API (p. ej. el póster de una película creada desde el panel). */
   url: (ruta: string) => BASE + ruta,
 

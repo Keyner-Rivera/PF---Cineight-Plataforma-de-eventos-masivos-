@@ -2,6 +2,7 @@
 
 import { m } from "framer-motion";
 import {
+  Armchair,
   BarChart3,
   Clapperboard,
   CalendarClock,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 import type { Rol } from "@/types/catalogo";
 
-export type IdSeccion = "general" | "clientes" | "peliculas" | "usuarios" | "parametros" | "reportes" | "bitacora" | "programar" | "inventario" | "validar";
+export type IdSeccion = "general" | "clientes" | "peliculas" | "usuarios" | "parametros" | "reportes" | "bitacora" | "programar" | "inventario" | "butacas" | "validar";
 type Seccion = { id: IdSeccion; txt: string; icono: LucideIcon };
 
 /** Secciones visibles según el rol (RF-44). */
@@ -25,6 +26,7 @@ export const SECCIONES: Record<Exclude<Rol, "cliente">, Seccion[]> = {
     { id: "peliculas", txt: "Películas", icono: Clapperboard },
     { id: "programar", txt: "Programación", icono: CalendarClock },
     { id: "inventario", txt: "Aforos & Salas", icono: Warehouse },
+    { id: "butacas", txt: "Butacas", icono: Armchair },
     { id: "validar", txt: "Validar acceso", icono: ScanLine },
   ],
   admin: [
@@ -32,6 +34,7 @@ export const SECCIONES: Record<Exclude<Rol, "cliente">, Seccion[]> = {
     { id: "clientes", txt: "Clientes", icono: HeartHandshake },
     { id: "peliculas", txt: "Películas", icono: Clapperboard },
     { id: "programar", txt: "Programación", icono: CalendarClock },
+    { id: "butacas", txt: "Butacas", icono: Armchair },
     { id: "usuarios", txt: "Usuarios & roles", icono: Users },
     { id: "parametros", txt: "Parámetros", icono: SlidersHorizontal },
     { id: "reportes", txt: "Reportes", icono: BarChart3 },
@@ -53,6 +56,7 @@ const TITULOS: Record<IdSeccion, [string, string]> = {
   bitacora: ["Bitácora de auditoría", "Registro cronológico de operaciones críticas (RNF-22)"],
   programar: ["Programación de funciones", "Sin traslapes: inicio + duración + 20 min de limpieza (RF-31)"],
   inventario: ["Aforos & salas", "Inventario por función (RF-66)"],
+  butacas: ["Butacas fuera de servicio", "Retira de la venta las butacas dañadas o en mantenimiento"],
   validar: ["Validación de acceso a sala", "Lector QR en modo teclado (RF-09, RF-27)"],
 };
 

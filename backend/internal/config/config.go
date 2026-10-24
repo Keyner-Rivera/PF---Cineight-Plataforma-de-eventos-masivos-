@@ -20,6 +20,7 @@ type Config struct {
 	DBMinConns     int32 // conexiones que el pool mantiene abiertas aunque no haya tráfico
 	RedisAddr      string
 	RedisURL       string // redis:// o rediss:// (TLS); si está definida tiene prioridad sobre RedisAddr
+	RedisPool      int    // conexiones máximas del pool de Redis (sin contar las 2 suscripciones de Pub/Sub)
 	OrigenesCORS   string
 	ConfiarProxy   bool          // detrás del proxy de un hosting: la IP del cliente sale de X-Forwarded-For
 	RateLimit      int64         // solicitudes por minuto por IP en rutas sensibles (reservas, cola)
@@ -45,12 +46,13 @@ func Cargar() (Config, error) {
 		DBMinConns:    int32(entero("DB_MIN_CONNS", 5)),
 		RedisAddr:     texto("REDIS_ADDR", "localhost:6379"),
 		RedisURL:      os.Getenv("REDIS_URL"),
+		RedisPool:     entero("REDIS_POOL", 20),
 		OrigenesCORS:  texto("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"),
 		ConfiarProxy:  os.Getenv("TRUST_PROXY") == "true" || os.Getenv("TRUST_PROXY") == "1",
 		RateLimit:     int64(entero("RATE_LIMIT", 5)),
 		RateLimitAlto: int64(entero("RATE_LIMIT_INTERACTIVO", 120)),
 		// Pocos turnos simultáneos: con un puñado de clientes ya se ve la fila avanzar (para producción, subirlo).
-		ColaCapacidad:  int64(entero("COLA_CAPACIDAD", 2)),
+		ColaCapacidad:  int64(entero("COLA_CAPACIDAD", 5)),
 		ColaTurno:      time.Duration(entero("COLA_TURNO_MINUTOS", 3)) * time.Minute,
 		Retencion:      time.Duration(entero("RETENCION_SEGUNDOS", 300)) * time.Second,
 		CacheCartelera: time.Duration(entero("CACHE_CARTELERA_SEGUNDOS", 15)) * time.Second,

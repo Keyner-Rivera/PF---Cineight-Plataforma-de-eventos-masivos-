@@ -111,6 +111,17 @@ CREATE TABLE bitacora_auditoria (
   fecha        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Butacas que el personal retira de la venta (dañadas o en mantenimiento) en todas las funciones de su sala.
+-- La API también la crea al arrancar si falta (bases creadas antes de este cambio).
+CREATE TABLE butacas_fuera_servicio (
+  sala_id     INT NOT NULL REFERENCES salas(id),
+  asiento     TEXT NOT NULL,
+  motivo      TEXT NOT NULL CHECK (motivo IN ('danada','fuera-servicio')),
+  marcada_por TEXT NOT NULL DEFAULT '',
+  desde       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (sala_id, asiento)
+);
+
 -- ───────── Datos iniciales ─────────
 -- Cuentas del personal. Los clientes se crean solos al registrarse (POST /api/sesion, con bono de bienvenida).
 -- El hash es un marcador: el inicio de sesión todavía se valida en el frontend (pendiente: JWT + bcrypt).
@@ -118,6 +129,9 @@ INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id) VALUES
   ('Carlos Agente',   'agente@cineight.gt',    '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 2),
   ('Admin Sistema',   'admin@cineight.gt',     '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 3),
   ('Laura Auditora',  'auditor@cineight.gt',   '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 4);
+-- Usuario de sistema dueño de las ventas en taquilla del preestreno (no puede iniciar sesión).
+INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id, activo) VALUES
+  ('Venta en taquilla', 'taquilla@cineight.gt', 'sin-acceso', 2, FALSE);
 
 INSERT INTO salas (codigo, nombre, tipo, filas, columnas, aforo) VALUES
   ('s1', 'Sala 1', 'IMAX Láser',  12, 16, 192),

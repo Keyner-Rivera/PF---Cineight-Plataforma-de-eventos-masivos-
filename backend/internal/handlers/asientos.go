@@ -4,19 +4,30 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/cineight/backend/pkg/httpx"
 )
 
-// GET /api/funciones
+// GET /api/funciones — se envía comprimida si el navegador acepta gzip (todos los actuales).
 func (a *API) listarFunciones(w http.ResponseWriter, r *http.Request) {
-	lista, err := a.s.Cartelera.Funciones(r.Context())
+	c, err := a.s.Cartelera.FuncionesJSON(r.Context())
 	if err != nil {
 		fallar(w, err)
 		return
 	}
-	httpx.JSON(w, 200, lista)
+	h := w.Header()
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Add("Vary", "Accept-Encoding")
+	cuerpo := c.Plano
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		h.Set("Content-Encoding", "gzip")
+		cuerpo = c.Gzip
+	}
+	h.Set("Content-Length", strconv.Itoa(len(cuerpo)))
+	w.WriteHeader(200)
+	_, _ = w.Write(cuerpo)
 }
 
 // GET /api/funciones/{id}/asientos[?usuario=ID] → {vendidos, retenidos, propios}
@@ -102,12 +113,12 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Suscribirse antes de leer la ocupación: así ningún cambio cae entre la foto inicial y el stream.
-	sub, err := a.s.Asientos.Suscribir(ctx, fid)
+	mensajes, baja, err := a.s.Asientos.Suscribir(ctx, fid)
 	if err != nil {
 		fallar(w, err)
 		return
 	}
-	defer sub.Close()
+	defer baja()
 	inicial, err := a.s.Asientos.Ocupacion(ctx, fid)
 	if err != nil {
 		fallar(w, err)
@@ -125,7 +136,6 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 	_ = httpx.EventoSSE(w, "estado", inicial)
 	flusher.Flush()
 
-	mensajes := sub.Channel()
 	latido := time.NewTicker(20 * time.Second)
 	defer latido.Stop()
 	for {
@@ -139,11 +149,11 @@ func (a *API) stream(w http.ResponseWriter, r *http.Request) {
 				fmt.Fprint(w, ": ping\n\n")
 			}
 			flusher.Flush()
-		case msg, ok := <-mensajes:
+		case payload, ok := <-mensajes:
 			if !ok {
-				return
+				return // el stream se quedó atrás: el navegador reconecta y recibe la foto completa
 			}
-			fmt.Fprintf(w, "event: asientos\ndata: %s\n\n", msg.Payload)
+			fmt.Fprintf(w, "event: asientos\ndata: %s\n\n", payload)
 			flusher.Flush()
 		}
 	}

@@ -86,7 +86,7 @@ export function HorariosPorDia({ funciones }: { funciones: Funcion[] }) {
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(118px,1fr))] gap-2">
                     {lista.map((f) => {
                       const o = ocupacion(f.id);
-                      const libres = s.aforo - o.vendidos.size - o.retenidos.size;
+                      const libres = o.libres(s.aforo);
                       return (
                         <Link
                           key={f.id}

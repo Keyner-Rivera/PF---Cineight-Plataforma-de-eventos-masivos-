@@ -1,12 +1,12 @@
 "use client";
 
 import { Fragment, memo } from "react";
-import { Accessibility, Ban, Check, Clock, Projector, Star } from "lucide-react";
+import { Accessibility, Ban, Check, Clock, Projector, Star, Wrench } from "lucide-react";
 import { FILAS, etiqueta } from "@/data/catalogo";
 import type { Sala } from "@/types/catalogo";
 import type { EstadoConexion } from "@/hooks/useAsientosEnVivo";
 
-export type EstadoButaca = "libre" | "sel" | "mio" | "bloqueada" | "vendida" | "pendiente";
+export type EstadoButaca = "libre" | "sel" | "mio" | "bloqueada" | "vendida" | "pendiente" | "fuera";
 
 // RNF-34: el estado se comunica con color y además con símbolo.
 const ESTILO: Record<EstadoButaca, [string, React.ReactNode, string]> = {
@@ -16,6 +16,7 @@ const ESTILO: Record<EstadoButaca, [string, React.ReactNode, string]> = {
   mio: ["border-oro bg-vino text-oro ring-2 ring-oro/50", <Check key="c" aria-hidden className="h-2.5 w-2.5 sm:h-3 sm:w-3" />, "Retenida por ti"],
   bloqueada: ["border-arena/30 bg-arena/10 text-arena/80 cursor-not-allowed", <Clock key="r" aria-hidden className="h-2.5 w-2.5 sm:h-3 sm:w-3" />, "Bloqueado por otro cliente"],
   vendida: ["border-borde/60 bg-fondo text-apagado cursor-not-allowed", <Ban key="v" aria-hidden className="h-2.5 w-2.5 sm:h-3 sm:w-3" />, "Ocupado"],
+  fuera: ["border-dashed border-borde bg-fondo/40 text-apagado/70 cursor-not-allowed", <Wrench key="f" aria-hidden className="h-2.5 w-2.5 sm:h-3 sm:w-3" />, "Fuera de servicio"],
 };
 
 type Props = {
@@ -91,7 +92,7 @@ export function MapaButacas({ sala: s, estadoDe, resaltadas, onElegir, conexion 
 // El "toque" se resuelve con CSS (active:scale-90), que corre en el compositor.
 const Butaca = memo(function Butaca({ a, estado, onElegir }: { a: string; estado: EstadoButaca; onElegir: (a: string) => void }) {
   const [cls, sym, txt] = ESTILO[estado];
-  const ocupada = estado === "vendida" || estado === "bloqueada" || estado === "pendiente";
+  const ocupada = estado === "vendida" || estado === "bloqueada" || estado === "pendiente" || estado === "fuera";
   return (
     <button
       disabled={ocupada}
@@ -107,7 +108,7 @@ const Butaca = memo(function Butaca({ a, estado, onElegir }: { a: string; estado
 });
 
 function Leyenda() {
-  const items: EstadoButaca[] = ["libre", "sel", "bloqueada", "vendida"];
+  const items: EstadoButaca[] = ["libre", "sel", "bloqueada", "vendida", "fuera"];
   return (
     <div className="flex w-fit max-w-full flex-wrap justify-center gap-x-5 gap-y-2 rounded-lg border border-borde bg-panel px-4 py-2.5 text-[9px] font-bold uppercase tracking-[0.14em] text-tenue sm:text-[10px]">
       {items.map((k) => (

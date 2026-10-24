@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cineight/backend/internal/domain"
-	"github.com/redis/go-redis/v9"
 )
 
 // Dobles de prueba en memoria: las pruebas del servicio de reservas no abren conexiones a PostgreSQL ni a Redis.
@@ -16,6 +15,7 @@ import (
 // catalogoFalso conoce una sola función (id 1, código f1).
 type catalogoFalso struct {
 	evento   *string
+	filas    int // 0 = sin límite; si no, la sala tiene filas A…'A'+filas-1
 	vendidos map[string]bool
 	iniciada bool
 }
@@ -29,7 +29,8 @@ func (c *catalogoFalso) FuncionID(_ context.Context, ref string) (int, error) {
 }
 func (c *catalogoFalso) CodigoFuncion(context.Context, int) (string, error)      { return "f1", nil }
 func (c *catalogoFalso) AsientosVendidos(context.Context, int) ([]string, error) { return nil, nil }
-func (c *catalogoFalso) VendidosVigentes(context.Context) (map[int]string, map[int][]string, error) {
+func (c *catalogoFalso) FueraServicio(context.Context, int) ([]string, error)    { return nil, nil }
+func (c *catalogoFalso) VendidosVigentes(context.Context) (map[int]string, map[int]domain.Ocupacion, error) {
 	return nil, nil, nil
 }
 func (c *catalogoFalso) ContextoReserva(_ context.Context, _ int, asientos []string, _ int64) (*string, int, int, error) {
@@ -38,6 +39,9 @@ func (c *catalogoFalso) ContextoReserva(_ context.Context, _ int, asientos []str
 	}
 	vendidos := 0
 	for _, a := range asientos {
+		if c.filas > 0 && int(a[0]-'A') >= c.filas {
+			return nil, 0, 0, domain.ErrAsientoInexistente
+		}
 		if c.vendidos[a] {
 			vendidos++
 		}
@@ -93,8 +97,10 @@ func (k *candadosFalsos) BorrarReserva(_ context.Context, r domain.Reserva) ([]s
 	}
 	return r.Asientos, nil
 }
-func (k *candadosFalsos) Publicar(context.Context, int, domain.EventoAsientos) error        { return nil }
-func (k *candadosFalsos) Suscribir(context.Context, int) (*redis.PubSub, error)             { return nil, nil }
+func (k *candadosFalsos) Publicar(context.Context, int, domain.EventoAsientos) error { return nil }
+func (k *candadosFalsos) Suscribir(context.Context, int) (<-chan string, func(), error) {
+	return nil, func() {}, nil
+}
 func (k *candadosFalsos) Expiraciones(context.Context, func(funcionID int, asiento string)) {}
 
 // ventasFalsas registra cuántas veces se cobró y devuelve los boletos de cada reserva pagada.
@@ -124,6 +130,8 @@ func (v *ventasFalsas) ValidarBoleto(context.Context, string) (domain.Validacion
 
 // turnosFalsos concede turno sólo a los usuarios de la lista.
 type turnosFalsos map[int64]bool
+
+func (t turnosFalsos) ConfirmarTurno(context.Context, *string, int64) {}
 
 func (t turnosFalsos) ExigirTurno(_ context.Context, evento *string, usuarioID int64) error {
 	if evento != nil && !t[usuarioID] {
@@ -247,5 +255,18 @@ func TestPagarReservaVencida(t *testing.T) {
 	r, _, _ := armar(&catalogoFalso{}, nil, 120)
 	if _, _, err := r.Pagar(context.Background(), "R-INEXISTENTE"); estado(err) != http.StatusGone {
 		t.Fatalf("una reserva vencida debería responder 410, fue %v", err)
+	}
+}
+
+func TestNoSeVendenButacasQueNoExistenEnLaSala(t *testing.T) {
+	r, k, _ := armar(&catalogoFalso{filas: 6}, nil, 120)
+	if _, _, err := r.Crear(context.Background(), SolicitudReserva{Funcion: "f1", UsuarioID: 7, Asientos: []string{"F-01", "J-12"}}); estado(err) != 400 {
+		t.Fatalf("J-12 no existe en una sala de 6 filas: debe ser 400, fue %v", err)
+	}
+	if len(k.retenidas) != 0 {
+		t.Fatalf("no debe retenerse ninguna butaca: %v", k.retenidas)
+	}
+	if err := r.asientos.Bloquear(context.Background(), "f1", "G-01", 7); estado(err) != 400 {
+		t.Fatalf("tampoco se puede bloquear desde el mapa: %v", err)
 	}
 }

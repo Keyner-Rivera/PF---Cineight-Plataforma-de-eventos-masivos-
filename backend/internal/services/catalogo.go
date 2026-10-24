@@ -1,6 +1,8 @@
 package services
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -9,6 +11,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -30,6 +33,16 @@ type Cartelera struct {
 	catalogo Catalogo
 	cache    Cache
 	ttl      time.Duration
+
+	mu    sync.Mutex // también evita que, al vencer la copia, muchas solicitudes consulten la base de datos a la vez
+	local CarteleraJSON
+	vence time.Time
+}
+
+// CarteleraJSON es la cartelera ya serializada, tal cual y comprimida con gzip (~10 veces más chica).
+type CarteleraJSON struct {
+	Plano []byte
+	Gzip  []byte
 }
 
 // NuevaCartelera crea el servicio. ttl es la vida de la cartelera en caché (0 = siempre desde la base de datos).
@@ -40,35 +53,61 @@ func NuevaCartelera(r Programador, c Catalogo, cache Cache, ttl time.Duration) *
 // claveCartelera es la entrada de caché de GET /api/funciones.
 const claveCartelera = "funciones"
 
-// Funciones devuelve la cartelera vigente. Es la consulta más pedida (portada, fichas, panel), así que se sirve
-// desde Redis durante ttl segundos; se invalida al programar funciones o crear películas. Las butacas libres de
-// cada función pueden ir hasta ttl segundos atrasadas: el mapa de butacas usa su propia consulta en tiempo real.
+// Funciones devuelve la cartelera vigente ya decodificada (ver FuncionesJSON).
 func (s *Cartelera) Funciones(ctx context.Context) ([]domain.Funcion, error) {
-	if s.ttl > 0 {
-		if datos, ok := s.cache.LeerCache(ctx, claveCartelera); ok {
-			var lista []domain.Funcion
-			if json.Unmarshal(datos, &lista) == nil {
-				return lista, nil
-			}
-		}
-	}
-	lista, err := s.catalogo.Funciones(ctx)
+	c, err := s.FuncionesJSON(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if lista == nil {
-		lista = []domain.Funcion{}
+	var lista []domain.Funcion
+	return lista, json.Unmarshal(c.Plano, &lista)
+}
+
+// FuncionesJSON devuelve la cartelera vigente lista para enviarse. Es la consulta más pedida (portada, fichas, panel)
+// y pesa decenas de KB, así que no se vuelve a serializar en cada solicitud: durante ttl se sirve una copia en memoria
+// (con su versión gzip), que a su vez sale de la caché de Redis compartida entre instancias o de PostgreSQL.
+// Se invalida al programar funciones, crear películas o retirar butacas. Las butacas libres de cada función pueden
+// ir hasta ttl segundos atrasadas: el mapa de butacas usa su propia consulta en tiempo real.
+func (s *Cartelera) FuncionesJSON(ctx context.Context) (CarteleraJSON, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ttl > 0 && time.Now().Before(s.vence) {
+		return s.local, nil
 	}
+	var datos []byte
 	if s.ttl > 0 {
-		if datos, err := json.Marshal(lista); err == nil {
+		datos, _ = s.cache.LeerCache(ctx, claveCartelera)
+	}
+	if datos == nil {
+		lista, err := s.catalogo.Funciones(ctx)
+		if err != nil {
+			return CarteleraJSON{}, err
+		}
+		if lista == nil {
+			lista = []domain.Funcion{}
+		}
+		if datos, err = json.Marshal(lista); err != nil {
+			return CarteleraJSON{}, err
+		}
+		if s.ttl > 0 {
 			s.cache.GuardarCache(ctx, claveCartelera, datos, s.ttl)
 		}
 	}
-	return lista, nil
+	var gz bytes.Buffer
+	w := gzip.NewWriter(&gz)
+	_, _ = w.Write(datos)
+	_ = w.Close()
+	s.local, s.vence = CarteleraJSON{Plano: datos, Gzip: gz.Bytes()}, time.Now().Add(s.ttl)
+	return s.local, nil
 }
 
 // InvalidarCartelera descarta la cartelera en caché para que la próxima consulta lea la base de datos.
-func (s *Cartelera) InvalidarCartelera(ctx context.Context) { s.cache.BorrarCache(ctx, claveCartelera) }
+func (s *Cartelera) InvalidarCartelera(ctx context.Context) {
+	s.mu.Lock()
+	s.vence = time.Time{}
+	s.mu.Unlock()
+	s.cache.BorrarCache(ctx, claveCartelera)
+}
 
 const (
 	maxPosterBytes   = 2 << 20 // 2 MB ya decodificado

@@ -3,20 +3,22 @@
 import { useParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { m } from "framer-motion";
-import { Armchair, LogIn, LogOut, RotateCcw, Ticket, Users } from "lucide-react";
+import { Armchair, CalendarRange, LogIn, LogOut, RotateCcw, Ticket, Users } from "lucide-react";
 import { EVENTOS, funcionDelEvento, pelicula } from "@/data/catalogo";
 import { PARAMETROS } from "@/data/parametros";
 import { useApp } from "@/store/AppProvider";
-import type { PosicionColaApi } from "@/types/api";
+import type { PosicionColaApi, PronosticoCola } from "@/types/api";
 import { useRecaptcha } from "@/hooks/useRecaptcha";
 import { otorgarTurno, quitarTurno, turnoVigente } from "@/utils/turnoCola";
 import { BotonVolver } from "@/components/ui/BotonVolver";
 import { Boton, BotonEnlace } from "@/components/ui/Boton";
 import { AvisoRecaptcha } from "@/components/auth/AvisoRecaptcha";
 
-type Fase = "verificar" | "esperando" | "turno";
+/** agotado: no queda ninguna butaca · cerrada: la función ya comenzó. */
+type Fase = "verificar" | "esperando" | "turno" | "agotado" | "cerrada";
 
-/** Cada cuánto consulta su lugar quien espera. El servidor saca de la fila a quien deja de consultar (20 s). */
+/** Cada cuánto consulta su lugar quien espera. El servidor saca de la fila a quien deja de consultar durante 2 min
+ * (margen para las pestañas en segundo plano, cuyos temporizadores el navegador frena). */
 const CONSULTA_MS = 2500;
 
 /**
@@ -39,6 +41,9 @@ export default function ColaVirtual() {
   const [enCola, setEnCola] = useState(0);
   const [espera, setEspera] = useState(0);
   const [capacidad, setCapacidad] = useState(0);
+  const [libres, setLibres] = useState<number | null>(null);
+  const [pronostico, setPronostico] = useState<PronosticoCola | null>(null);
+  const [confirmado, setConfirmado] = useState(true);
   const [expira, setExpira] = useState(() => turnoVigente(id));
   const [ahora, setAhora] = useState(() => Date.now());
 
@@ -52,13 +57,21 @@ export default function ColaVirtual() {
   const aplicar = (pos: PosicionColaApi) => {
     setEnCola(pos.en_cola);
     setCapacidad(pos.capacidad);
+    setLibres(pos.butacas_libres ?? null);
+    if (pos.agotado || pos.cerrada) {
+      quitarTurno(id);
+      setFase(pos.agotado ? "agotado" : "cerrada");
+      return;
+    }
     if (pos.turno_habilitado && pos.expira) {
       const vence = Date.parse(pos.expira);
       otorgarTurno(id, vence);
       setExpira(vence);
+      setConfirmado(pos.confirmado ?? true);
       setFase("turno");
       return;
     }
+    setPronostico(pos.pronostico ?? null);
     setPosicion(pos.posicion);
     setInicial((i) => Math.max(i, pos.posicion));
     setEspera(pos.espera_min);
@@ -82,11 +95,12 @@ export default function ColaVirtual() {
     };
   }, [correo, id]);
 
-  // Mientras espera, consulta su lugar (y así conserva su posición en la fila).
+  // Mientras espera, consulta su lugar (y así conserva su posición en la fila). Al volver a la pestaña o desbloquear
+  // el teléfono consulta de inmediato, sin esperar al siguiente intervalo.
   useEffect(() => {
     if (fase !== "esperando") return;
     let vivo = true;
-    const t = setInterval(async () => {
+    const consultar = async () => {
       const r = await appRef.current.colaConsultar(id);
       if (!vivo) return;
       if (r.ok && r.pos) aplicarRef.current(r.pos);
@@ -94,12 +108,34 @@ export default function ColaVirtual() {
         setFase("verificar");
         setAviso("Perdiste tu lugar en la cola. Vuelve a ingresar.");
       }
-    }, CONSULTA_MS);
+    };
+    const alVolver = () => {
+      if (document.visibilityState === "visible") consultar();
+    };
+    const t = setInterval(consultar, CONSULTA_MS);
+    document.addEventListener("visibilitychange", alVolver);
+    window.addEventListener("pageshow", alVolver);
+    return () => {
+      vivo = false;
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", alVolver);
+      window.removeEventListener("pageshow", alVolver);
+    };
+  }, [fase, id]);
+
+  // Con el turno en su minuto de gracia, vuelve a consultar para reflejar la extensión al bloquear una butaca.
+  useEffect(() => {
+    if (fase !== "turno" || confirmado) return;
+    let vivo = true;
+    const t = setInterval(async () => {
+      const r = await appRef.current.colaConsultar(id);
+      if (vivo && r.ok && r.pos) aplicarRef.current(r.pos);
+    }, 5000);
     return () => {
       vivo = false;
       clearInterval(t);
     };
-  }, [fase, id]);
+  }, [fase, confirmado, id]);
 
   useEffect(() => {
     const t = setInterval(() => setAhora(Date.now()), 1000);
@@ -143,8 +179,8 @@ export default function ColaVirtual() {
       </div>
       <h1 className="titulo mt-3 text-4xl leading-tight">{evento.nombre}</h1>
       <p className="mt-2 text-sm text-tenue">
-        La demanda supera la capacidad de atención simultánea. Te atenderemos por orden de llegada. No cierres esta ventana: si la abandonas,
-        pierdes tu posición.
+        La demanda supera la capacidad de atención simultánea. Te atenderemos por orden de llegada y te diremos si tu lugar alcanza butaca.
+        Puedes cambiar de pestaña; si cierras esta ventana por más de 2 minutos, pierdes tu posición.
       </p>
 
       <div className="mt-6 rounded-xl border border-rojo/40 bg-gradient-to-br from-panel via-panel to-vino/40 p-6 sm:p-8">
@@ -178,9 +214,12 @@ export default function ColaVirtual() {
             <m.p key={posicion} initial={{ scale: 1.15, opacity: 0.6 }} animate={{ scale: 1, opacity: 1 }} className="mt-1 text-7xl font-black tabular-nums">
               {posicion}
             </m.p>
-            <p className="mt-1 text-sm text-tenue">
-              Tiempo estimado: <b className="text-oro">~{minutosEspera} min</b>
-            </p>
+            {pronostico !== "no-alcanza" && (
+              <p className="mt-1 text-sm text-tenue">
+                Tiempo estimado: <b className="text-oro">~{minutosEspera} min</b>
+              </p>
+            )}
+            {libres !== null && <Pronostico libres={libres} pronostico={pronostico} posicion={posicion} />}
             <div className="mt-5 h-1.5 overflow-hidden rounded-full bg-fondo">
               <m.div className="h-full bg-rojo" animate={{ width: `${Math.max(4, (1 - (posicion - 1) / Math.max(inicial, 1)) * 100)}%` }} />
             </div>
@@ -209,8 +248,15 @@ export default function ColaVirtual() {
               <b className="text-lg font-black text-oro tabular-nums">
                 {Math.floor(restanteTurno / 60000)}:{String(Math.floor((restanteTurno % 60000) / 1000)).padStart(2, "0")}
               </b>{" "}
-              para seleccionar tus asientos. Si no lo aprovechas, el turno pasa al siguiente cliente.
+              {confirmado
+                ? "para elegir tus asientos y pagar. Si no lo aprovechas, el turno pasa al siguiente cliente."
+                : "para elegir al menos una butaca. Al hacerlo tendrás el turno completo para pagar; si no, pasa al siguiente cliente."}
             </p>
+            {libres !== null && (
+              <p className="mt-1 text-xs text-tenue">
+                Quedan <b className="text-tinta">{libres}</b> {libres === 1 ? "butaca disponible" : "butacas disponibles"} en este momento.
+              </p>
+            )}
             {restanteTurno > 0 ? (
               <BotonEnlace href={`/funcion/${funcionEvento.id}`} icono={Armchair} className="mt-5">
                 Seleccionar asientos
@@ -222,7 +268,41 @@ export default function ColaVirtual() {
             )}
           </m.div>
         )}
+
+        {(fase === "agotado" || fase === "cerrada") && (
+          <div className="text-center">
+            <p className="titulo text-3xl">{fase === "agotado" ? "Boletos agotados" : "La venta terminó"}</p>
+            <p className="mt-2 text-sm text-tenue">
+              {fase === "agotado"
+                ? "Ya no quedan butacas para este preestreno. La cola se cerró para que nadie espere sin posibilidad de comprar."
+                : "Esta función ya comenzó, así que la cola virtual se cerró."}{" "}
+              Puedes elegir otra función de la película.
+            </p>
+            <BotonEnlace href={`/pelicula/${pelicula(funcionEvento.peliculaId).id}#horarios`} icono={CalendarRange} className="mt-5">
+              Ver otros horarios
+            </BotonEnlace>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+/** Butacas que quedan y si el lugar del cliente alcanza (cada cliente puede llevar hasta 2). */
+function Pronostico({ libres, pronostico, posicion }: { libres: number; pronostico: PronosticoCola | null; posicion: number }) {
+  const adelante = Math.max(0, posicion - 1);
+  const [cls, texto] =
+    pronostico === "alcanza"
+      ? ["border-oro/50 bg-oro/10 text-oro", "Con tu lugar deberías alcanzar butaca."]
+      : pronostico === "no-alcanza"
+        ? ["border-rojo/60 bg-vino/50 text-salmon", `Es poco probable que alcances: hay ${adelante} ${adelante === 1 ? "persona" : "personas"} delante de ti para ${libres} ${libres === 1 ? "butaca" : "butacas"}. Si se liberan, te avisaremos aquí mismo.`]
+        : ["border-arena/40 bg-arena/10 text-arena", "Depende de cuántas butacas compren quienes están delante de ti (hasta 2 cada uno)."];
+  return (
+    <div className={`mt-4 rounded-lg border px-4 py-3 text-sm ${cls}`}>
+      <p className="font-bold">
+        Quedan {libres} {libres === 1 ? "butaca disponible" : "butacas disponibles"}
+      </p>
+      <p className="mt-0.5 text-xs opacity-90">{texto}</p>
     </div>
   );
 }

@@ -55,7 +55,7 @@ func (s *Reservas) Crear(ctx context.Context, sol SolicitudReserva) (id string, 
 		return "", expira, err
 	}
 	if vendidos > 0 {
-		return "", expira, domain.Conflicto("Alguno de los asientos ya fue vendido.")
+		return "", expira, domain.Conflicto("Alguno de los asientos ya no está disponible.")
 	}
 	// Límite por cliente en preestrenos de alta demanda (RF-36).
 	if evento != nil && propios+len(sol.Asientos) > domain.MaxBoletosPorEvento {
@@ -74,6 +74,7 @@ func (s *Reservas) Crear(ctx context.Context, sol SolicitudReserva) (id string, 
 		_, _ = s.candados.BorrarReserva(ctx, r)
 		return "", expira, err
 	}
+	s.asientos.turnos.ConfirmarTurno(ctx, evento, sol.UsuarioID)
 	s.asientos.publicar(ctx, fid, ref, domain.AsientoBloqueado, r.Asientos)
 	return r.ID, time.Now().Add(s.retencion), nil
 }

@@ -59,6 +59,10 @@ var ErrNoExiste = errors.New("no existe")
 // ErrFuncionIniciada: la función ya empezó (o se canceló) y no admite más ventas.
 var ErrFuncionIniciada = errors.New("la función ya comenzó")
 
+// ErrAsientoInexistente: la butaca tiene formato válido pero no existe en la sala de la función (p. ej. J-12 en una
+// sala de 6 filas). Sin esta revisión se podrían vender butacas fantasma y superar el aforo.
+var ErrAsientoInexistente = errors.New("la butaca no existe en la sala")
+
 // ErrNoDisponible envuelve las fallas de conexión con Redis: la API responde 503 en lugar de un error interno.
 var ErrNoDisponible = errors.New("servicio de reservas no disponible")
 

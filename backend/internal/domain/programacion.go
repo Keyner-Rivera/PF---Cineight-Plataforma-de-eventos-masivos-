@@ -30,6 +30,8 @@ const (
 	EventoPreestreno    = "e1"     // cola virtual
 	PeliculaPreestreno  = "dune-2" // la última función de mañana en la sala del preestreno
 	SalaPreestreno      = "s1"
+	LibresPreestreno    = 20                     // butacas que la venta en taquilla deja libres en cada preestreno
+	CorreoTaquilla      = "taquilla@cineight.gt" // usuario de sistema dueño de las ventas en taquilla
 	ZonaHoraria         = "America/Guatemala"
 )
 

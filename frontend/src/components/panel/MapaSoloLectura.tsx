@@ -15,16 +15,17 @@ export function MapaSoloLectura({ f }: { f: Funcion }) {
   const s = sala(f.salaId);
   const o = ocupacion(f.id);
   const pas = new Set(s.pasillos);
-  const libres = s.aforo - o.vendidos.size - o.retenidos.size;
+  const libres = o.libres(s.aforo);
   return (
     <div>
       <p className="text-sm text-tenue">
         {pelicula(f.peliculaId).titulo} · {s.nombre} {s.tipo} · {fmtFecha(f.inicio)} {fmtHora(f.inicio)}
       </p>
-      <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+      <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
         {[
           ["Vendidas", o.vendidos.size, "text-tinta"],
           ["Retenidas", o.retenidos.size, "text-arena"],
+          ["Fuera de servicio", o.fuera.size, "text-apagado"],
           ["Disponibles", libres, "text-oro"],
         ].map(([t, v, c]) => (
           <div key={t as string} className="rounded-md border border-borde bg-fondo py-2">
@@ -41,7 +42,7 @@ export function MapaSoloLectura({ f }: { f: Funcion }) {
               <span className="w-4 text-center text-[9px] font-bold text-tenue">{FILAS[fi]}</span>
               {Array.from({ length: s.columnas }).map((_, c) => {
                 const a = etiqueta(fi, c);
-                const cls = o.vendidos.has(a) ? "bg-rojo/80" : o.retenidos.has(a) ? "bg-arena/60" : "bg-butaca";
+                const cls = o.fuera.has(a) ? "border border-dashed border-borde bg-fondo" : o.vendidos.has(a) ? "bg-rojo/80" : o.retenidos.has(a) ? "bg-arena/60" : "bg-butaca";
                 return (
                   <span key={a} className="flex">
                     <span title={a} className={`h-4 w-4 rounded-[3px] ${cls}`} />
@@ -57,6 +58,7 @@ export function MapaSoloLectura({ f }: { f: Funcion }) {
         <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-butaca" /> Disponible</span>
         <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-arena/60" /> Retenida (TTL)</span>
         <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-rojo/80" /> Vendida</span>
+        <span className="flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm border border-dashed border-borde bg-fondo" /> Fuera de servicio</span>
       </div>
       <p className="mt-2 text-[11px] text-apagado">El personal consulta la ocupación; la compra en línea es exclusiva de los clientes.</p>
     </div>

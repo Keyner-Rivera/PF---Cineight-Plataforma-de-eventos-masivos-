@@ -158,7 +158,7 @@ Abre **http://localhost:3000**. Si la API no está levantada verás *Servicio no
 
 ### Cuentas iniciales del personal
 
-Los clientes se registran desde *Iniciar sesión → Registrarse* (reciben 120 créditos de bienvenida). Para entrar al panel
+Los clientes se registran desde *Iniciar sesión → Registrarse* (reciben 800 créditos de bienvenida). Para entrar al panel
 de operaciones existen estas cuentas, con la contraseña inicial `cineight123`:
 
 | Rol | Correo |
@@ -292,11 +292,16 @@ de *Duna: Parte Dos* de mañana en la Sala 1 IMAX (80 créditos); cuando empieza
 ### Cola virtual del preestreno
 
 1. El cliente pasa la verificación anti-bots (reCAPTCHA v3) y entra a la fila (`POST /api/cola/e1`).
-2. La API admite por orden de llegada a `COLA_CAPACIDAD` clientes a la vez (2 por defecto, para que con pocos navegadores
-   ya se vea la fila avanzar; súbelo en producción). Cada uno recibe un turno de `COLA_TURNO_MINUTOS` (3) para elegir
-   butacas y pagar; al pagar o vencer, el cupo pasa al siguiente.
-3. Quien espera consulta su lugar cada 2,5 s; si cierra la página deja de hacerlo y a los 20 s pierde su lugar.
-4. Bloquear o reservar butacas del preestreno sin turno vigente responde `403`: la cola no se puede saltar.
+2. La API admite por orden de llegada a `COLA_CAPACIDAD` clientes a la vez (5 por defecto), pero nunca más de los que
+   alcanzan las butacas sin tomar (cada cliente puede llevar hasta 2). Cada turno empieza con **un minuto de gracia**:
+   si el cliente no bloquea ninguna butaca, pasa al siguiente; si bloquea, el turno dura `COLA_TURNO_MINUTOS` (3)
+   desde que lo recibió. Al pagar o vencer, el cupo pasa al siguiente.
+3. La cola conoce el inventario: muestra a quien espera cuántas butacas quedan y si su lugar **alcanza**, es
+   **incierto** o **no alcanza**; cuando no queda ninguna se cierra con *Boletos agotados* y no admite a nadie más.
+   Tampoco admite a quien ya compró sus 2 boletos del preestreno.
+4. Quien espera consulta su lugar cada 2,5 s (y de inmediato al volver a la pestaña); si deja de hacerlo durante 2 min
+   (cerró la página) pierde su lugar.
+5. Bloquear o reservar butacas del preestreno sin turno vigente responde `403`: la cola no se puede saltar.
 
 Todo ocurre en un script Lua atómico sobre tres ZSET de Redis (`cola:`, `turnos:`, `latidos:`), así dos clientes nunca
 ocupan el mismo cupo. Para probarla: abre el preestreno en tres navegadores con clientes distintos; el tercero espera.
@@ -355,10 +360,13 @@ Todavía en el navegador (pendiente: JWT + bcrypt): el inicio de sesión, la ges
 | GET | `/api/funciones/{codigo\|id}/stream` | **SSE**: evento `estado` (foto inicial) y `asientos` (`bloqueado`, `liberado`, `vendido`) |
 | POST | `/api/funciones/{codigo\|id}/asientos/{butaca}/bloqueo` | `{usuario_id}` → candado de la butaca por 5 min (409 si la tiene otro) |
 | DELETE | `/api/funciones/{codigo\|id}/bloqueos` | `{usuario_id, asientos}` → suelta butacas propias |
+| GET | `/api/salas/{sala}/fuera-servicio` | Butacas dañadas o fuera de servicio de la sala (no se venden en ninguna de sus funciones) |
+| POST | `/api/salas/{sala}/fuera-servicio/{asiento}` | `{motivo: "danada"\|"fuera-servicio", por}` → retira la butaca de la venta |
+| DELETE | `/api/salas/{sala}/fuera-servicio/{asiento}?por=` | Devuelve la butaca a la venta |
 | POST | `/api/reservas` | `{funcion, usuario_id, asientos}` → retención de 5 min |
 | POST | `/api/reservas/{id}/pagar` | Pago idempotente → boletos y saldo |
 | DELETE | `/api/reservas/{id}` | Libera la retención |
-| POST | `/api/sesion` | `{correo, nombre, pase?}` → usuario y cuenta (bono de 120). Con reCAPTCHA activo, crear una cuenta nueva exige el `pase` (403 sin él) |
+| POST | `/api/sesion` | `{correo, nombre, pase?}` → usuario y cuenta (bono de 800). Con reCAPTCHA activo, crear una cuenta nueva exige el `pase` (403 sin él) |
 | GET | `/api/usuarios/{id}/cuenta` | Saldo, movimientos y boletos |
 | POST | `/api/creditos/trivia` | `{usuario_id, partida, aciertos}` → acreditación única por partida |
 | POST | `/api/boletos/{token}/validar` | Validación atómica en el acceso |

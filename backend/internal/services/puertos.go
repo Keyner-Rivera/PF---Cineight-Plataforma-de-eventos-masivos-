@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/cineight/backend/internal/domain"
-	"github.com/redis/go-redis/v9"
 )
 
 // Catalogo resuelve funciones y su ocupación vendida.
@@ -16,7 +15,8 @@ type Catalogo interface {
 	FuncionID(ctx context.Context, ref string) (int, error)
 	CodigoFuncion(ctx context.Context, id int) (string, error)
 	AsientosVendidos(ctx context.Context, funcionID int) ([]string, error)
-	VendidosVigentes(ctx context.Context) (codigos map[int]string, vendidos map[int][]string, err error)
+	FueraServicio(ctx context.Context, funcionID int) ([]string, error)
+	VendidosVigentes(ctx context.Context) (codigos map[int]string, ocupacion map[int]domain.Ocupacion, err error)
 	ContextoReserva(ctx context.Context, funcionID int, asientos []string, usuarioID int64) (evento *string, vendidos, propios int, err error)
 }
 
@@ -38,8 +38,18 @@ type Cuentas interface {
 }
 
 // PlanificadorDias completa la cartelera de los días indicados según el plan de salas.
+// Migrar aplica antes los cambios de esquema y de datos pendientes.
 type PlanificadorDias interface {
+	Migrar(ctx context.Context) error
 	ProgramarDias(ctx context.Context, dias []time.Time, plan []domain.PlanSala) (int, error)
+}
+
+// Mantenimiento administra las butacas que el personal retira de la venta.
+type Mantenimiento interface {
+	ButacasFueraServicio(ctx context.Context, sala string) ([]domain.ButacaFueraServicio, error)
+	MarcarFueraServicio(ctx context.Context, sala, asiento, motivo, por string) error
+	HabilitarButaca(ctx context.Context, sala, asiento string) error
+	FuncionesVigentesDeSala(ctx context.Context, sala string) (map[int]string, error)
 }
 
 // Pases son comprobantes de un solo uso de que el cliente superó reCAPTCHA.
@@ -71,14 +81,16 @@ type Candados interface {
 	Reserva(ctx context.Context, id string) (domain.Reserva, error)
 	BorrarReserva(ctx context.Context, r domain.Reserva) ([]string, error)
 	Publicar(ctx context.Context, funcionID int, ev domain.EventoAsientos) error
-	Suscribir(ctx context.Context, funcionID int) (*redis.PubSub, error)
+	// Suscribir registra un stream de la función: canal de cambios (JSON) y función para darlo de baja.
+	Suscribir(ctx context.Context, funcionID int) (<-chan string, func(), error)
 	Expiraciones(ctx context.Context, fn func(funcionID int, asiento string))
 }
 
 // Colas es la cola virtual y el contador de solicitudes.
 type Colas interface {
 	EntrarCola(ctx context.Context, evento, usuario string, ahora time.Time) error
-	AvanzarCola(ctx context.Context, evento, usuario string, ahora time.Time, capacidad int64, turno, inactividad time.Duration) (domain.EstadoCola, error)
+	AvanzarCola(ctx context.Context, evento, usuario string, ahora time.Time, cupo int64, gracia, inactividad time.Duration) (domain.EstadoCola, error)
+	ConfirmarTurno(ctx context.Context, evento, usuario string, ahora time.Time, turno time.Duration) error
 	SalirCola(ctx context.Context, evento, usuario string) error
 	TurnoActivo(ctx context.Context, evento, usuario string, ahora time.Time) (bool, error)
 	Colas(ctx context.Context) map[string]int64
@@ -92,7 +104,15 @@ type Cache interface {
 	BorrarCache(ctx context.Context, clave string)
 }
 
-// Turnos verifica que quien compra un preestreno tenga turno vigente de la cola virtual.
+// Turnos verifica que quien compra un preestreno tenga turno vigente de la cola virtual y, cuando bloquea
+// butacas, confirma el turno para que dure completo.
 type Turnos interface {
 	ExigirTurno(ctx context.Context, evento *string, usuarioID int64) error
+	ConfirmarTurno(ctx context.Context, evento *string, usuarioID int64)
+}
+
+// Eventos da a la cola virtual el inventario del preestreno y los boletos que ya tiene cada cliente.
+type Eventos interface {
+	InventarioEvento(ctx context.Context, evento string) (domain.InventarioEvento, error)
+	BoletosDeUsuario(ctx context.Context, funcionID int, usuarioID int64) (int, error)
 }

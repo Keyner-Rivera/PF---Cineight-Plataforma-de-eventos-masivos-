@@ -41,7 +41,7 @@ export function Inventario() {
                 <td className="pr-3 text-right">{cap}</td>
                 <td className="pr-3 text-right">{o.vendidos.size}</td>
                 <td className="pr-3 text-right text-arena">{o.retenidos.size}</td>
-                <td className="text-right font-bold text-oro">{cap - o.vendidos.size - o.retenidos.size}</td>
+                <td className="text-right font-bold text-oro">{o.libres(cap)}</td>
               </tr>
             );
           })}

@@ -11,7 +11,8 @@ import (
 // ProgramarDias completa la cartelera de los días indicados (medianoche local de cada uno) según el plan.
 // Una sala que ya tiene alguna función ese día no se toca: así no se duplica lo que creó init.sql ni lo que
 // programó un agente. Al final, si no queda ningún preestreno por delante, la última función de la película del preestreno
-// de mañana en su sala pasa a ser el nuevo preestreno con cola virtual. Devuelve cuántas funciones creó.
+// de mañana en su sala pasa a ser el nuevo preestreno con cola virtual, y cada preestreno nuevo recibe sus ventas de
+// taquilla (ver ocuparPreestrenos). Devuelve cuántas funciones creó.
 func (p *Postgres) ProgramarDias(ctx context.Context, dias []time.Time, plan []domain.PlanSala) (int, error) {
 	creadas := 0
 	err := pgx.BeginFunc(ctx, p.db, func(tx pgx.Tx) error {
@@ -66,8 +67,11 @@ func (p *Postgres) ProgramarDias(ctx context.Context, dias []time.Time, plan []d
 				            ORDER BY f.inicio DESC LIMIT 1)
 				  AND NOT EXISTS (SELECT 1 FROM funciones WHERE evento = $1 AND inicio > now())`,
 				domain.EventoPreestreno, domain.PrecioPreestreno, domain.PeliculaPreestreno, domain.SalaPreestreno, dias[1], dias[1].AddDate(0, 0, 1))
+			if err != nil {
+				return err
+			}
 		}
-		return err
+		return ocuparPreestrenos(ctx, tx)
 	})
 	return creadas, err
 }

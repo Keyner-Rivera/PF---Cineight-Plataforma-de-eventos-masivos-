@@ -6,7 +6,7 @@ export const PARAMETROS = {
   maxBoletosPorEvento: 2,
   limpiezaMinutos: 20,
   costoBoleto: 50,
-  bonoBienvenida: 120,
+  bonoBienvenida: 800,
   preguntasTrivia: 3,
   creditosPorRespuesta: 10,
   bonoTriviaPerfecta: 50,

@@ -11,7 +11,7 @@ import (
 const (
 	MaxAsientosPorCompra = 6   // RF-21
 	MaxBoletosPorEvento  = 2   // RF-36: preestrenos de alta demanda
-	BonoBienvenida       = 120 // créditos de una cuenta nueva
+	BonoBienvenida       = 800 // créditos de una cuenta nueva
 	CreditosPorAcierto   = 10
 	BonoTriviaPerfecta   = 50
 	PreguntasTrivia      = 3
@@ -83,11 +83,23 @@ type NuevaFuncion struct {
 	Precio  int       `json:"precio"`
 }
 
-// Ocupacion de una función: butacas vendidas (PostgreSQL) y retenidas o bloqueadas (Redis).
+// Ocupacion de una función: butacas vendidas y fuera de servicio (PostgreSQL) y retenidas o bloqueadas (Redis).
 type Ocupacion struct {
-	Vendidos  []string `json:"vendidos"`
-	Retenidos []string `json:"retenidos"`
-	Propios   []string `json:"propios,omitempty"` // bloqueos del usuario que consulta (?usuario=)
+	Vendidos      []string `json:"vendidos"`
+	Retenidos     []string `json:"retenidos"`
+	FueraServicio []string `json:"fuera_servicio"`
+	Propios       []string `json:"propios,omitempty"` // bloqueos del usuario que consulta (?usuario=)
+}
+
+// Motivos por los que el personal retira una butaca de la venta.
+var MotivosFueraServicio = map[string]bool{"danada": true, "fuera-servicio": true}
+
+// ButacaFueraServicio es una butaca retirada de la venta en todas las funciones de su sala.
+type ButacaFueraServicio struct {
+	Asiento    string    `json:"asiento"`
+	Motivo     string    `json:"motivo"`
+	MarcadaPor string    `json:"marcada_por"`
+	Desde      time.Time `json:"desde"`
 }
 
 // Boleto emitido tras un pago. Incluye los datos de su función para mostrarlo aunque la función ya
@@ -146,13 +158,25 @@ type Validacion struct {
 	Titular string  `json:"titular,omitempty"`
 }
 
+// InventarioEvento son las butacas de un preestreno que todavía se pueden vender.
+type InventarioEvento struct {
+	FuncionID int
+	Abierta   bool // la función no ha comenzado
+	Libres    int  // aforo menos vendidas y fuera de servicio (incluye las retenidas por otros clientes)
+	Retenidas int  // bloqueadas o reservadas en este momento (Redis)
+}
+
+// Disponibles son las butacas que nadie tiene tomadas ahora mismo.
+func (i InventarioEvento) Disponibles() int { return max(i.Libres-i.Retenidas, 0) }
+
 // EstadoCola es la situación de un usuario en la cola virtual según Redis.
 type EstadoCola struct {
-	Turno    bool      // tiene turno vigente
-	Vence    time.Time // fin del turno
-	EnFila   bool      // está esperando
-	Posicion int64     // 1 = el siguiente en pasar
-	EnCola   int64     // cuántos esperan en total
+	Turno      bool      // tiene turno vigente
+	Confirmado bool      // bloqueó butacas dentro del minuto de gracia: el turno dura completo
+	Vence      time.Time // fin del turno
+	EnFila     bool      // está esperando
+	Posicion   int64     // 1 = el siguiente en pasar
+	EnCola     int64     // cuántos esperan en total
 }
 
 // PosicionCola en la cola virtual de un preestreno (respuesta de la API).
@@ -161,8 +185,13 @@ type PosicionCola struct {
 	EnCola          int64      `json:"en_cola"`
 	TurnoHabilitado bool       `json:"turno_habilitado"`
 	EsperaMin       int        `json:"espera_min"`
-	Expira          *time.Time `json:"expira,omitempty"` // fin del turno, si lo tiene
-	Capacidad       int64      `json:"capacidad"`        // clientes atendidos a la vez
+	Expira          *time.Time `json:"expira,omitempty"`     // fin del turno, si lo tiene
+	Confirmado      bool       `json:"confirmado"`           // ya bloqueó butacas: el turno dura completo (si no, es el minuto de gracia)
+	Capacidad       int64      `json:"capacidad"`            // clientes atendidos a la vez
+	ButacasLibres   int        `json:"butacas_libres"`       // a la venta y sin tomar en este momento
+	Pronostico      string     `json:"pronostico,omitempty"` // quien espera: alcanza | incierto | no-alcanza
+	Agotado         bool       `json:"agotado,omitempty"`    // no queda ninguna butaca: la cola se cerró
+	Cerrada         bool       `json:"cerrada,omitempty"`    // la función ya comenzó
 }
 
 // OcupacionFuncion resume la venta de una función para el panel de métricas.
@@ -217,6 +246,7 @@ const (
 	AsientoBloqueado TipoEventoAsiento = "bloqueado" // alguien la tomó (clic en el mapa o reserva)
 	AsientoLiberado  TipoEventoAsiento = "liberado"  // se soltó, se canceló o venció el TTL
 	AsientoVendido   TipoEventoAsiento = "vendido"   // pago confirmado
+	AsientoRetirado  TipoEventoAsiento = "retirado"  // el personal la marcó fuera de servicio
 )
 
 // EventoAsientos es el mensaje que reciben los clientes conectados por SSE.

@@ -28,10 +28,13 @@ const (
 // Redis agrupa el estado efímero de la API.
 type Redis struct {
 	rdb *redis.Client
+	dif *difusor // reparte el Pub/Sub de butacas entre los streams SSE (ver IniciarDifusion)
 }
 
 // NuevoRedis crea el repositorio sobre un cliente go-redis.
-func NuevoRedis(rdb *redis.Client) *Redis { return &Redis{rdb: rdb} }
+func NuevoRedis(rdb *redis.Client) *Redis {
+	return &Redis{rdb: rdb, dif: &difusor{subs: map[int]map[chan string]struct{}{}, listo: make(chan struct{})}}
+}
 
 // Cliente expone el cliente subyacente (lo usa el oyente de expiraciones).
 func (r *Redis) Cliente() *redis.Client { return r.rdb }
@@ -241,17 +244,6 @@ func (r *Redis) Publicar(ctx context.Context, funcionID int, ev domain.EventoAsi
 		return err
 	}
 	return falla(r.rdb.Publish(ctx, CanalFuncion(funcionID), datos).Err())
-}
-
-// Suscribir abre una suscripción al canal de una función. Quien llama debe cerrarla.
-func (r *Redis) Suscribir(ctx context.Context, funcionID int) (*redis.PubSub, error) {
-	sub := r.rdb.Subscribe(ctx, CanalFuncion(funcionID))
-	// Receive espera la confirmación: a partir de aquí no se pierde ningún mensaje.
-	if _, err := sub.Receive(ctx); err != nil {
-		sub.Close()
-		return nil, falla(err)
-	}
-	return sub, nil
 }
 
 // LiberarBloqueos suelta las butacas que el usuario bloqueó desde el mapa.

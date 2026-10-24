@@ -27,7 +27,8 @@ import type { Funcion, NuevaFuncion, NuevaPelicula, Pelicula, Rol } from "@/type
 import type { Boleto, Cuenta, Log, ModoApi, Movimiento, Reserva, Resultado, Usuario, Validacion } from "@/types/cuenta";
 import { INICIAL, adminsActivos, conCuenta, conPersonal, cuentaNueva, hashClave, log, mensaje, type Estado } from "./estado";
 
-type Ocupacion = { vendidos: Set<string>; retenidos: Set<string> };
+/** `fuera`: butacas dañadas o fuera de servicio. `libres(aforo)` no cuenta dos veces una butaca vendida y luego retirada. */
+type Ocupacion = { vendidos: Set<string>; retenidos: Set<string>; fuera: Set<string>; libres: (aforo: number) => number };
 export type ResultadoCola = { ok: boolean; pos?: PosicionColaApi; error?: string; fuera?: boolean };
 
 type Ctx = {
@@ -286,12 +287,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const previo = a[ev.funcion] ?? { vendidos: [], retenidos: [] };
       const retenidos = new Set(previo.retenidos);
       const vendidos = new Set(previo.vendidos);
+      const fuera = new Set(previo.fuera_servicio);
       for (const as of ev.asientos) {
         if (ev.tipo === "bloqueado") retenidos.add(as);
         else retenidos.delete(as);
         if (ev.tipo === "vendido") vendidos.add(as);
+        if (ev.tipo === "retirado") fuera.add(as);
+        if (ev.tipo === "liberado") fuera.delete(as);
       }
-      return { ...a, [ev.funcion]: { vendidos: [...vendidos], retenidos: [...retenidos] } };
+      return { ...a, [ev.funcion]: { vendidos: [...vendidos], retenidos: [...retenidos], fuera_servicio: [...fuera] } };
     });
   }, []);
 
@@ -355,7 +359,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const ocupacion = useCallback(
     (funcionId: string): Ocupacion => {
       const d = asientosApi[funcionId];
-      return { vendidos: new Set(d?.vendidos ?? []), retenidos: new Set(d?.retenidos ?? []) };
+      const vendidos = new Set(d?.vendidos ?? []);
+      const retenidos = new Set(d?.retenidos ?? []);
+      const fuera = new Set(d?.fuera_servicio ?? []);
+      const ocupadas = new Set([...vendidos, ...retenidos, ...fuera]).size;
+      return { vendidos, retenidos, fuera, libres: (aforo: number) => Math.max(0, aforo - ocupadas) };
     },
     [asientosApi],
   );

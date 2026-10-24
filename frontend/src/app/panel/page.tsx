@@ -15,6 +15,7 @@ import { Bitacora } from "@/components/panel/Bitacora";
 import { Programar } from "@/components/panel/Programar";
 import { Inventario } from "@/components/panel/Inventario";
 import { Validar } from "@/components/panel/Validar";
+import { Butacas } from "@/components/panel/Butacas";
 
 // Panel de operaciones del personal (agente, administrador, auditor).
 // Los datos de la sesión y "Cerrar sesión" están en el menú de usuario del encabezado.
@@ -51,6 +52,7 @@ export default function Panel() {
       {activa === "bitacora" && <Bitacora />}
       {activa === "programar" && <Programar />}
       {activa === "inventario" && <Inventario />}
+      {activa === "butacas" && <Butacas />}
       {activa === "validar" && <Validar />}
     </MarcoPanel>
   );

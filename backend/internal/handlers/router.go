@@ -21,6 +21,7 @@ type Servicios struct {
 	Panel     *services.Panel
 	Seguridad *services.Seguridad
 	Cartelera *services.Cartelera
+	Butacas   *services.Butacas
 }
 
 // Limites de solicitudes por minuto y por IP.
@@ -57,6 +58,11 @@ func NuevoRouter(s Servicios, limites Limites, origenes map[string]bool) http.Ha
 	mux.HandleFunc("GET /api/funciones/{id}/stream", a.stream)
 	mux.Handle("POST /api/funciones/{id}/asientos/{asiento}/bloqueo", interactivo(a.bloquear))
 	mux.Handle("DELETE /api/funciones/{id}/bloqueos", interactivo(a.desbloquear))
+
+	// Butacas dañadas o fuera de servicio (agente operativo y administrador)
+	mux.HandleFunc("GET /api/salas/{sala}/fuera-servicio", a.listarFueraServicio)
+	mux.Handle("POST /api/salas/{sala}/fuera-servicio/{asiento}", interactivo(a.retirarButaca))
+	mux.Handle("DELETE /api/salas/{sala}/fuera-servicio/{asiento}", interactivo(a.habilitarButaca))
 
 	// Compra
 	mux.Handle("POST /api/reservas", sensible(a.crearReserva))

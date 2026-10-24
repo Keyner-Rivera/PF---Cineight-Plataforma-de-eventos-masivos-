@@ -73,10 +73,11 @@ func (p *Postgres) AcreditarTrivia(ctx context.Context, usuarioID int64, partida
 	return
 }
 
-// Metricas calcula los indicadores del panel a partir de PostgreSQL.
+// Metricas calcula los indicadores del panel a partir de PostgreSQL. Las ventas de taquilla que llenan el preestreno
+// para pruebas no cuentan como ventas del día (sí ocupan butacas en la ocupación por función).
 func (p *Postgres) Metricas(ctx context.Context) (domain.Metricas, error) {
 	m := domain.Metricas{Funciones: []domain.OcupacionFuncion{}}
-	_ = p.db.QueryRow(ctx, `SELECT count(*), coalesce(sum(precio), 0) FROM boletos WHERE fecha_venta >= date_trunc('day', now()) AND estado IN ('valido','utilizado')`).
+	_ = p.db.QueryRow(ctx, `SELECT count(*), coalesce(sum(precio), 0) FROM boletos WHERE fecha_venta >= date_trunc('day', now()) AND estado IN ('valido','utilizado') AND reserva_id NOT LIKE 'taquilla:%'`).
 		Scan(&m.VendidosHoy, &m.IngresosHoy)
 	_ = p.db.QueryRow(ctx, `SELECT coalesce(sum(monto) FILTER (WHERE referencia LIKE 'trivia:%'), 0), coalesce(-sum(monto) FILTER (WHERE tipo = 'debito'), 0) FROM movimientos_credito`).
 		Scan(&m.CreditosTrivia, &m.CreditosCanjeados)

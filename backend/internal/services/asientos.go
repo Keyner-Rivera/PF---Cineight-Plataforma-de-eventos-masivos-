@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/cineight/backend/internal/domain"
-	"github.com/redis/go-redis/v9"
 )
 
 // Asientos gestiona el mapa de butacas en tiempo real: candados individuales (SET NX EX)
@@ -41,17 +40,26 @@ func errorDeFuncion(err error) error {
 		return domain.NoEncontrado("La función no existe.")
 	case errors.Is(err, domain.ErrFuncionIniciada):
 		return domain.Expirado("Esta función ya comenzó. Elige otro horario.")
+	case errors.Is(err, domain.ErrAsientoInexistente):
+		return domain.Invalido("Esa butaca no existe en la sala de esta función.")
 	}
 	return err
 }
 
-// Ocupacion combina las butacas vendidas (PostgreSQL) y las retenidas o bloqueadas (claves vivas en Redis).
+// Ocupacion combina las butacas vendidas y fuera de servicio (PostgreSQL) y las retenidas o bloqueadas (claves vivas en Redis).
 func (s *Asientos) Ocupacion(ctx context.Context, funcionID int) (domain.Ocupacion, error) {
 	vendidos, err := s.catalogo.AsientosVendidos(ctx, funcionID)
 	if err != nil {
 		return domain.Ocupacion{}, err
 	}
-	return domain.Ocupacion{Vendidos: vendidos, Retenidos: s.candados.Retenidos(ctx, funcionID)}, nil
+	fuera, err := s.catalogo.FueraServicio(ctx, funcionID)
+	if err != nil {
+		return domain.Ocupacion{}, err
+	}
+	if fuera == nil {
+		fuera = []string{}
+	}
+	return domain.Ocupacion{Vendidos: vendidos, Retenidos: s.candados.Retenidos(ctx, funcionID), FueraServicio: fuera}, nil
 }
 
 // BloqueosDe lista las butacas que el usuario tiene bloqueadas en la función.
@@ -61,14 +69,15 @@ func (s *Asientos) BloqueosDe(ctx context.Context, funcionID int, usuarioID int6
 
 // OcupacionVigente devuelve la ocupación de todas las funciones vigentes, indexada por código público.
 func (s *Asientos) OcupacionVigente(ctx context.Context) (map[string]domain.Ocupacion, error) {
-	codigos, vendidos, err := s.catalogo.VendidosVigentes(ctx)
+	codigos, ocupacion, err := s.catalogo.VendidosVigentes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	retenidos := s.candados.RetenidosPorFuncion(ctx)
 	out := make(map[string]domain.Ocupacion, len(codigos))
 	for id, codigo := range codigos {
-		o := domain.Ocupacion{Vendidos: vendidos[id], Retenidos: retenidos[id]}
+		o := ocupacion[id]
+		o.Retenidos = retenidos[id]
 		if o.Retenidos == nil {
 			o.Retenidos = []string{}
 		}
@@ -94,7 +103,7 @@ func (s *Asientos) Bloquear(ctx context.Context, ref, asiento string, usuarioID 
 		return err
 	}
 	if vendidos > 0 {
-		return domain.Conflicto("La butaca " + asiento + " ya fue vendida.")
+		return domain.Conflicto("La butaca " + asiento + " ya no está disponible.")
 	}
 
 	switch r, err := s.candados.Bloquear(ctx, fid, asiento, usuarioID, s.retencion, domain.MaxAsientosPorCompra); {
@@ -107,6 +116,7 @@ func (s *Asientos) Bloquear(ctx context.Context, ref, asiento string, usuarioID 
 	case r == 2:
 		return nil // renovación de un bloqueo propio: los demás clientes ya la ven bloqueada
 	}
+	s.turnos.ConfirmarTurno(ctx, evento, usuarioID)
 	s.publicar(ctx, fid, ref, domain.AsientoBloqueado, []string{asiento})
 	return nil
 }
@@ -128,8 +138,8 @@ func (s *Asientos) Desbloquear(ctx context.Context, ref string, asientos []strin
 	return nil
 }
 
-// Suscribir abre el canal de cambios de una función.
-func (s *Asientos) Suscribir(ctx context.Context, funcionID int) (*redis.PubSub, error) {
+// Suscribir registra un stream de cambios de una función. Hay que llamar a la función devuelta al terminar.
+func (s *Asientos) Suscribir(ctx context.Context, funcionID int) (<-chan string, func(), error) {
 	return s.candados.Suscribir(ctx, funcionID)
 }
 

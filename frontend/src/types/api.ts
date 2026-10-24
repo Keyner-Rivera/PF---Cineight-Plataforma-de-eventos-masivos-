@@ -15,7 +15,7 @@ export type FuncionApi = {
   evento: string | null;
   disponibles: number;
 };
-export type AsientosApi = { vendidos: string[]; retenidos: string[]; propios?: string[] };
+export type AsientosApi = { vendidos: string[]; retenidos: string[]; fuera_servicio?: string[]; propios?: string[] };
 export type ReservaApi = { reserva_id: string; expira: string };
 /** Boleto con los datos de su función (sirven para mostrarlo aunque la función ya haya terminado). */
 export type BoletoApi = {
@@ -92,7 +92,25 @@ export type ConsumoPeliculaApi = {
 export type HistorialClienteApi = { id: number; nombre: string; correo: string; activo: boolean; creado: string; saldo: number; peliculas: ConsumoPeliculaApi[] };
 
 /** Lugar en la cola virtual de un preestreno: posición en la fila o turno vigente (con su vencimiento). */
-export type PosicionColaApi = { posicion: number; en_cola: number; turno_habilitado: boolean; espera_min: number; expira?: string; capacidad: number };
+/** Pronóstico para quien espera: si su lugar alcanza butaca aunque los de adelante compren el máximo, o no. */
+export type PronosticoCola = "alcanza" | "incierto" | "no-alcanza";
+export type PosicionColaApi = {
+  posicion: number;
+  en_cola: number;
+  turno_habilitado: boolean;
+  espera_min: number;
+  expira?: string;
+  /** false = minuto de gracia: si no bloquea una butaca a tiempo, el turno pasa al siguiente. */
+  confirmado?: boolean;
+  capacidad: number;
+  butacas_libres?: number;
+  pronostico?: PronosticoCola;
+  agotado?: boolean;
+  cerrada?: boolean;
+};
 
 /** Mensaje del stream SSE de una función (evento "asientos"). */
-export type EventoAsientosApi = { tipo: "bloqueado" | "liberado" | "vendido"; funcion: string; asientos: string[] };
+/** "retirado": el personal marcó la butaca fuera de servicio; "liberado" también la devuelve a la venta. */
+export type EventoAsientosApi = { tipo: "bloqueado" | "liberado" | "vendido" | "retirado"; funcion: string; asientos: string[] };
+export type MotivoFueraServicio = "danada" | "fuera-servicio";
+export type ButacaFueraServicioApi = { asiento: string; motivo: MotivoFueraServicio; marcada_por: string; desde: string };
