@@ -111,7 +111,8 @@ export const api = {
   salirCola: (evento: string, usuarioId: number) => del<{ estado: string }>(`/api/cola/${seg(evento)}/${usuarioId}`),
 
   // Operación
-  validarBoleto: (token: string) => post<ValidacionApi>(`/api/boletos/${seg(token)}/validar`),
+  /** Marca el boleto como usado si `codigo` es el código dinámico vigente de su QR (ventana de un minuto). */
+  validarBoleto: (token: string, codigo: string, ventana: number) => post<ValidacionApi>(`/api/boletos/${seg(token)}/validar`, { codigo, ventana }),
   metricas: () => pedir<MetricasApi>("/api/metricas"),
   /** Compras de cada cliente agrupadas por película (estadísticas del administrador). */
   historialClientes: () => pedir<HistorialClienteApi[]>("/api/clientes/historial"),

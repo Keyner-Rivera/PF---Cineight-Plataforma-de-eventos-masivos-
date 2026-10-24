@@ -628,27 +628,32 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, monto: 0, error: mensaje(err) };
       }
     },
-    validarBoleto: async (token) => {
-      // Acepta el contenido del QR (JSON con código dinámico) o el identificador escrito a mano.
-      let tok = token.trim();
-      let qrVencido = false;
-      if (tok.startsWith("{")) {
+    validarBoleto: async (entrada) => {
+      // Acepta el contenido del QR (JSON con el código dinámico y su ventana) o "TOKEN CÓDIGO" escrito a mano.
+      // El servidor comprueba el código: un QR vencido (captura de pantalla) o sin código no consume el boleto.
+      let tok = "";
+      let codigo = "";
+      let ventana = ventanaActual();
+      const texto = entrada.trim();
+      if (texto.startsWith("{")) {
         try {
-          const q = JSON.parse(tok);
-          tok = q.t;
-          const w = ventanaActual();
-          qrVencido = !(q.w >= w - 1 && q.w <= w && q.c === codigoDinamico(q.t, q.w));
-        } catch {
-          tok = "";
-        }
+          const q = JSON.parse(texto);
+          tok = String(q.t ?? "");
+          codigo = String(q.c ?? "");
+          ventana = Number(q.w);
+        } catch {}
+      } else {
+        [tok = "", codigo = ""] = texto.split(/\s+/);
+        // A mano no se conoce la ventana: se busca la del minuto anterior, el actual o el siguiente que dé ese código.
+        const w = ventanaActual();
+        ventana = [w, w - 1, w + 1].find((x) => codigoDinamico(tok, x) === codigo.toUpperCase()) ?? w;
       }
       let res: Validacion;
       if (!tok) res = { ok: false, motivo: "Boleto inexistente" };
-      // El código dinámico se comprueba antes de llamar a la API: un QR vencido no consume el boleto.
-      else if (qrVencido) res = { ok: false, motivo: "Código QR vencido (posible captura de pantalla)" };
+      else if (!codigo) res = { ok: false, motivo: "Falta el código de 6 caracteres que aparece bajo el QR." };
       else {
         try {
-          const r = await api.validarBoleto(tok);
+          const r = await api.validarBoleto(tok, codigo, ventana);
           res = { ok: r.ok, motivo: r.motivo, boleto: r.boleto && boletoDeApi(r.boleto, r.titular ?? "") };
         } catch (err) {
           res = { ok: false, motivo: mensaje(err) };

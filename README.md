@@ -361,6 +361,7 @@ Todavía en el navegador (pendiente: JWT + bcrypt): el inicio de sesión, la ges
 | POST | `/api/funciones/{codigo\|id}/asientos/{butaca}/bloqueo` | `{usuario_id}` → candado de la butaca por 5 min (409 si la tiene otro) |
 | DELETE | `/api/funciones/{codigo\|id}/bloqueos` | `{usuario_id, asientos}` → suelta butacas propias |
 | GET | `/api/salas/{sala}/fuera-servicio` | Butacas dañadas o fuera de servicio de la sala (no se venden en ninguna de sus funciones) |
+| POST | `/api/boletos/{token}/validar` | `{codigo, ventana}` → marca el boleto como utilizado (una sola vez) si el código dinámico de su QR es vigente; si no, lo rechaza sin consumirlo |
 | POST | `/api/salas/{sala}/fuera-servicio/{asiento}` | `{motivo: "danada"\|"fuera-servicio", por}` → retira la butaca de la venta |
 | DELETE | `/api/salas/{sala}/fuera-servicio/{asiento}?por=` | Devuelve la butaca a la venta |
 | POST | `/api/reservas` | `{funcion, usuario_id, asientos}` → retención de 5 min |
@@ -369,7 +370,6 @@ Todavía en el navegador (pendiente: JWT + bcrypt): el inicio de sesión, la ges
 | POST | `/api/sesion` | `{correo, nombre, pase?}` → usuario y cuenta (bono de 800). Con reCAPTCHA activo, crear una cuenta nueva exige el `pase` (403 sin él) |
 | GET | `/api/usuarios/{id}/cuenta` | Saldo, movimientos y boletos |
 | POST | `/api/creditos/trivia` | `{usuario_id, partida, aciertos}` → acreditación única por partida |
-| POST | `/api/boletos/{token}/validar` | Validación atómica en el acceso |
 | GET | `/api/metricas` | KPIs del panel de administración |
 | GET | `/api/clientes/historial` | Compras de cada cliente agrupadas por película (boletos, visitas, gasto, última compra) |
 | POST | `/api/cola/{evento}` | `{usuario_id, pase?}` → entra a la cola virtual: posición en la fila o turno con vencimiento |

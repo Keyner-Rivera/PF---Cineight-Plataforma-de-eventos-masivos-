@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/cineight/backend/internal/domain"
 )
@@ -68,8 +69,15 @@ func (s *CuentasClientes) Trivia(ctx context.Context, usuarioID int64, partida s
 	return
 }
 
-// ValidarBoleto registra el intento en la bitácora (RF-09, RF-27).
-func (s *CuentasClientes) ValidarBoleto(ctx context.Context, tok string) (domain.Validacion, error) {
+// ValidarBoleto marca el boleto como utilizado si el código dinámico del QR es vigente, y registra el intento en la
+// bitácora (RF-09, RF-27). El código se comprueba aquí y no sólo en el navegador del agente: sin él, quien conozca el
+// token podría marcarlo como usado llamando directamente a la API, y una captura de pantalla vieja serviría para entrar.
+// Un código vencido o falso no consume el boleto.
+func (s *CuentasClientes) ValidarBoleto(ctx context.Context, tok, codigo string, ventana int64) (domain.Validacion, error) {
+	if !domain.CodigoQRVigente(tok, codigo, ventana, time.Now()) {
+		s.auditoria.Auditar(ctx, nil, "VALIDACION_ACCESO", "boletos", map[string]any{"token": tok, "ok": false, "motivo": "codigo QR vencido"})
+		return domain.Validacion{OK: false, Motivo: "Código QR vencido o inválido (posible captura de pantalla). Pide al cliente que abra de nuevo su entrada."}, nil
+	}
 	v, err := s.ventas.ValidarBoleto(ctx, tok)
 	if err == nil {
 		s.auditoria.Auditar(ctx, nil, "VALIDACION_ACCESO", "boletos", map[string]any{"token": tok, "ok": v.OK})

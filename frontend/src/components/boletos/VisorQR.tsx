@@ -108,7 +108,7 @@ export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Bolet
               >
                 {valido ? (
                   <>
-                    <QRCodeSVG value={JSON.stringify({ t: b.token, f: f.id, a: b.asiento, c: codigo, w: ventana })} size={200} className="h-[min(200px,55vw)] w-[min(200px,55vw)]" />
+                    <QRCodeSVG value={JSON.stringify({ t: b.token, f: f.id, a: b.asiento, c: codigo, w: ventana })} level="M" size={200} className="h-[min(200px,55vw)] w-[min(200px,55vw)]" />
                     {/* Marca de agua con el titular: desalienta la reventa de capturas */}
                     <div className="pointer-events-none absolute inset-0 flex -rotate-[30deg] flex-col justify-center gap-6 text-[10px] font-semibold text-black/15" aria-hidden>
                       {Array.from({ length: 6 }).map((_, k) => (

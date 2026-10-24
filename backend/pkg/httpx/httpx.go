@@ -60,13 +60,20 @@ func LeerHasta(r *http.Request, destino any, maxBytes int64) error {
 }
 
 // ConfiarProxy indica que la API corre detrás del proxy de un hosting (Render, Railway, Fly…): todas las
-// conexiones llegan desde el proxy, así que la IP del cliente es la última que el proxy agregó a X-Forwarded-For.
-// Sólo debe activarse detrás de un proxy: si no, un cliente podría falsear su IP con esa cabecera.
+// conexiones llegan desde el proxy, así que la IP del cliente sale de las cabeceras que éste agrega.
+// Sólo debe activarse detrás de un proxy: si no, un cliente podría falsear su IP con esas cabeceras.
 var ConfiarProxy bool
 
-// IP devuelve la dirección del cliente (sin puerto).
+// IP devuelve la dirección del cliente (sin puerto). Detrás de un proxy:
+//   - CF-Connecting-IP si la trae: Render (y cualquier sitio detrás de Cloudflare) la fija con la IP real y reemplaza
+//     la que mande el cliente. En Render, la última entrada de X-Forwarded-For es un proxy interno que rota entre
+//     unas pocas IPs: limitar por ella haría que todos los clientes compartan el mismo límite por minuto.
+//   - si no, la última entrada de X-Forwarded-For (la que agregó el proxy de confianza).
 func IP(r *http.Request) string {
 	if ConfiarProxy {
+		if ip := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); ip != "" {
+			return ip
+		}
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			partes := strings.Split(xff, ",")
 			if ip := strings.TrimSpace(partes[len(partes)-1]); ip != "" {

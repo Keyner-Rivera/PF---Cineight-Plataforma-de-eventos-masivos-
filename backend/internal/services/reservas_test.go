@@ -105,9 +105,10 @@ func (k *candadosFalsos) Expiraciones(context.Context, func(funcionID int, asien
 
 // ventasFalsas registra cuántas veces se cobró y devuelve los boletos de cada reserva pagada.
 type ventasFalsas struct {
-	cobros  int
-	boletos map[string][]domain.Boleto
-	saldo   int
+	cobros    int
+	validados int
+	boletos   map[string][]domain.Boleto
+	saldo     int
 }
 
 func (v *ventasFalsas) BoletosDeReserva(_ context.Context, id string) []domain.Boleto {
@@ -125,7 +126,8 @@ func (v *ventasFalsas) RegistrarVenta(_ context.Context, r domain.Reserva) (int,
 	return v.saldo, nil
 }
 func (v *ventasFalsas) ValidarBoleto(context.Context, string) (domain.Validacion, error) {
-	return domain.Validacion{}, nil
+	v.validados++
+	return domain.Validacion{OK: true, Motivo: "Acceso permitido"}, nil
 }
 
 // turnosFalsos concede turno sólo a los usuarios de la lista.

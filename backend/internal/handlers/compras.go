@@ -107,7 +107,13 @@ func (a *API) trivia(w http.ResponseWriter, r *http.Request) {
 
 // POST /api/boletos/{token}/validar
 func (a *API) validarBoleto(w http.ResponseWriter, r *http.Request) {
-	v, err := a.s.Cuentas.ValidarBoleto(r.Context(), r.PathValue("token"))
+	// {codigo, ventana}: el código dinámico que muestra el QR del cliente y su ventana de un minuto.
+	var q struct {
+		Codigo  string `json:"codigo"`
+		Ventana int64  `json:"ventana"`
+	}
+	_ = httpx.Leer(r, &q) // sin cuerpo el código queda vacío y el servicio rechaza la validación
+	v, err := a.s.Cuentas.ValidarBoleto(r.Context(), r.PathValue("token"), q.Codigo, q.Ventana)
 	if err != nil {
 		fallar(w, err)
 		return

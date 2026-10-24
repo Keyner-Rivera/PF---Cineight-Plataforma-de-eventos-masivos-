@@ -177,6 +177,25 @@ body {
   }
 }
 
+/* Línea que recorre la guía del escáner de QR */
+.escaner-linea {
+  animation: escaner-recorrido 2.2s ease-in-out infinite alternate;
+}
+@keyframes escaner-recorrido {
+  from {
+    top: 8%;
+  }
+  to {
+    top: 92%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .escaner-linea {
+    animation: none;
+    top: 50%;
+  }
+}
+
 /* reCAPTCHA v3: la insignia flotante se oculta y el aviso legal se muestra junto al formulario (permitido por Google) */
 .grecaptcha-badge {
   visibility: hidden;

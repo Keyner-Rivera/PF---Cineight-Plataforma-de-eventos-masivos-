@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/cineight/backend/internal/domain"
 )
@@ -71,5 +72,32 @@ func TestSesionExigePaseSoloParaCuentasNuevas(t *testing.T) {
 	}
 	if repo.creadas != 1 {
 		t.Fatalf("se esperaba 1 cuenta creada, hubo %d", repo.creadas)
+	}
+}
+
+func TestValidarBoletoExigeElCodigoDinamicoVigente(t *testing.T) {
+	ventas := &ventasFalsas{}
+	s := NuevoCuentas(nil, ventas, auditoriaMuda{}, nil)
+	ctx := context.Background()
+	tok := "CE-3F9A1B2C4D5E"
+	ahora := domain.VentanaQR(time.Now())
+
+	for nombre, c := range map[string]struct {
+		codigo  string
+		ventana int64
+	}{
+		"sin código (llamada directa a la API)": {"", ahora},
+		"captura de hace 5 minutos":             {domain.CodigoDinamico(tok, ahora-5), ahora - 5},
+		"código inventado":                      {"ABC123", ahora},
+	} {
+		if v, err := s.ValidarBoleto(ctx, tok, c.codigo, c.ventana); err != nil || v.OK {
+			t.Errorf("%s: debe rechazarse, fue %+v %v", nombre, v, err)
+		}
+	}
+	if ventas.validados != 0 {
+		t.Fatalf("un código rechazado no debe consumir el boleto (se marcó %d veces)", ventas.validados)
+	}
+	if v, err := s.ValidarBoleto(ctx, tok, domain.CodigoDinamico(tok, ahora), ahora); err != nil || !v.OK || ventas.validados != 1 {
+		t.Fatalf("con el código vigente se valida una vez: %+v %v (%d)", v, err, ventas.validados)
 	}
 }
