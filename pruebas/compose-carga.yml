@@ -25,6 +25,10 @@ services:
       CORS_ORIGINS: http://localhost:3100
       RECAPTCHA_SECRET: ""
       COLA_CAPACIDAD: "5"
+      # Retención de butacas; para ver el vencimiento en la prueba de requisitos usa RETENCION_SEGUNDOS=20.
+      RETENCION_SEGUNDOS: ${RETENCION_SEGUNDOS:-300}
+      CLAVE_INICIAL_PERSONAL: "Cine#Temporal2026"
+      QR_SECRET: "secreto-de-pruebas-de-carga-con-mas-de-32-caracteres"
     ports: ["18080:8080"]
     deploy: { resources: { limits: { cpus: "0.10", memory: 512M } } }
     depends_on:

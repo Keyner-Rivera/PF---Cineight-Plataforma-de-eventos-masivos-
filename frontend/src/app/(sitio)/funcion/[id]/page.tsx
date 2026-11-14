@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { m } from "framer-motion";
-import { CalendarRange, CircleCheck, Clock, CreditCard, Gamepad2, Gem, ListX, LogIn, Ticket, Timer, Users, X } from "lucide-react";
+import { CalendarRange, CircleCheck, Clock, CreditCard, Gamepad2, Gem, ListX, LogIn, Receipt, Ticket, Timer, Users, X } from "lucide-react";
 import { pelicula, sala, finFuncion } from "@/data/catalogo";
 import { PARAMETROS } from "@/data/parametros";
 import { fmtDuracion, fmtFechaLarga, fmtHora } from "@/utils/formato";
@@ -44,6 +44,7 @@ export default function PaginaFuncion() {
   const [alerta, setAlerta] = useState<Alerta | null>(null);
   const [confirmarCancelar, setConfirmarCancelar] = useState(false);
   const [emitidos, setEmitidos] = useState<Boleto[] | null>(null);
+  const [compra, setCompra] = useState<{ folio: string; total: number } | null>(null);
 
   // Referencias al estado más reciente: permiten handlers estables (las 192 butacas están memoizadas).
   const appRef = useRef(app);
@@ -186,7 +187,8 @@ export default function PaginaFuncion() {
   const occ = ocupacion(f.id);
   const miReserva = reserva?.funcionId === f.id ? reserva : null;
   const asientosResumen = miReserva?.asientos ?? sel;
-  const total = asientosResumen.length * f.precio;
+  // Con reserva, el total es el que calculó el servidor; antes de reservar, una estimación con la tarifa de la función.
+  const total = miReserva?.total ?? asientosResumen.length * f.precio;
   const faltan = usuario?.rol === "cliente" ? Math.max(0, total - saldo) : 0;
   const sinTurno = listo && f.eventoId && !turnoVigente(f.eventoId) && !miReserva && !emitidos;
 
@@ -233,6 +235,7 @@ export default function PaginaFuncion() {
     setProcesando(false);
     if (!r.ok) return setErrorPago(r.error!);
     setCheckout(false);
+    setCompra({ folio: r.folio!, total: r.total! });
     setEmitidos(r.boletos!);
     // Preestreno: la compra termina el turno y el cupo pasa al siguiente de la cola virtual.
     if (f.eventoId) {
@@ -478,16 +481,19 @@ export default function PaginaFuncion() {
               <CircleCheck aria-hidden className="mx-auto h-14 w-14 text-oro" />
               <h2 className="titulo mt-3 text-2xl">¡Compra exitosa!</h2>
               <p className="text-sm text-tenue">
-                Se debitaron {emitidos.length * f.precio} créditos. Enviamos el comprobante a {usuario?.correo}.
+                Se debitaron <b className="text-tinta">{compra?.total ?? emitidos.length * f.precio} créditos</b>. Folio de compra{" "}
+                <span className="font-mono text-tinta">{compra?.folio}</span>: tu comprobante con QR verificable ya está disponible.
               </p>
             </div>
             <GrupoBoletos boletos={emitidos} />
-            <div className="flex gap-2">
-              <BotonEnlace href="/mis-entradas" icono={Ticket} className="flex-1">
+            <div className="flex flex-wrap gap-2">
+              {compra && (
+                <BotonEnlace href={`/comprobante/${compra.folio}`} icono={Receipt} className="flex-1">
+                  Ver comprobante
+                </BotonEnlace>
+              )}
+              <BotonEnlace href="/mis-entradas" icono={Ticket} variante="borde" className="flex-1">
                 Mis Entradas
-              </BotonEnlace>
-              <BotonEnlace href="/" variante="borde" className="flex-1">
-                Cartelera
               </BotonEnlace>
             </div>
           </m.div>

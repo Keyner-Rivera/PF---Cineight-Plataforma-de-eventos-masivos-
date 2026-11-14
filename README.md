@@ -5,10 +5,16 @@ Usa el stack de la Tabla 19 / Sección 3.4.3: **Next.js 16 + Tailwind CSS + Fram
 
 ## Novedades de esta versión
 
+- **Autenticación en el servidor** (OWASP): contraseñas con bcrypt en PostgreSQL, sesiones con token aleatorio de 256 bits
+  (la base guarda sólo su SHA-256) que vencen tras 15 min sin actividad o 12 h en total, cierre de sesión que revoca el
+  token en el servidor (también "en todos los dispositivos" y en todas las pestañas a la vez), bloqueo de la cuenta tras 5
+  intentos fallidos, control de acceso por rol en cada ruta y contraseña temporal del personal que debe cambiarse al entrar.
+  Ver [Seguridad](#seguridad).
+
 - **Butacas en tiempo real:** cada butaca elegida queda bloqueada a tu nombre 5 min (candado atómico en Redis) y los demás
   clientes la ven bloqueada al instante por **Server-Sent Events**. Si recargas la página recuperas tus propios bloqueos.
 - **reCAPTCHA v3 invisible** en inicio de sesión, registro y cola virtual, verificado por el backend antes de procesar credenciales.
-  Al aprobar el token, el backend entrega un **pase de un solo uso** (Redis, 10 min) que `POST /api/sesion` exige para crear
+  Al aprobar el token, el backend entrega un **pase de un solo uso** (Redis, 10 min) que `POST /api/auth/registro` exige para crear
   una cuenta nueva: un bot ya no puede saltarse la verificación llamando directamente a la API para fabricar cuentas con bono.
 - **Estadísticas de clientes** (Administrador → *Clientes*): historial de compras de cada cliente con películas vistas,
   géneros, directores y actores favoritos, gasto y última compra; búsqueda, orden y exportación a CSV.
@@ -81,8 +87,6 @@ cineight/
 | Caché / candados | Redis 8 | Implementado en Docker (retención de 5 min con TTL, cola, rate limiting) |
 | Infraestructura local | Docker Compose | PostgreSQL + Redis + API |
 
-**Pendiente:** autenticación en el servidor (JWT + bcrypt). Hoy las cuentas y contraseñas se validan en el navegador de
-cada visitante, así que un cliente registrado en un equipo no existe en otro, y no se puede cambiar la contraseña.
 
 ## Cómo abrirlo en tu computadora
 
@@ -159,7 +163,9 @@ Abre **http://localhost:3000**. Si la API no está levantada verás *Servicio no
 ### Cuentas iniciales del personal
 
 Los clientes se registran desde *Iniciar sesión → Registrarse* (reciben 800 créditos de bienvenida). Para entrar al panel
-de operaciones existen estas cuentas, con la contraseña inicial `cineight123`:
+de operaciones existen estas cuentas. Su contraseña inicial es la de la variable `CLAVE_INICIAL_PERSONAL` de la API (si no
+la defines, la API genera una y la escribe en su registro: `docker compose logs api | grep SEGURIDAD`). Al primer inicio de
+sesión el sistema obliga a cambiarla:
 
 | Rol | Correo |
 |---|---|
@@ -167,8 +173,11 @@ de operaciones existen estas cuentas, con la contraseña inicial `cineight123`:
 | Agente Operativo | `agente@cineight.gt` |
 | Auditor | `auditor@cineight.gt` |
 
-El administrador crea, edita o da de baja más cuentas en *Panel → Usuarios & roles*. Mientras la autenticación siga en el
-navegador, la contraseña inicial es pública (está en el código del sitio): no la uses para nada fuera de este proyecto.
+El administrador crea, edita o da de baja más cuentas en *Panel → Usuarios & roles* (reconfirmando su contraseña). Las
+cuentas nuevas reciben una contraseña temporal que también deben cambiar al entrar.
+
+Los clientes registrados antes de la autenticación en el servidor no tienen contraseña allí: al intentar entrar se les pide
+usar *Registrarse* con el mismo correo para crearla, y conservan su saldo y sus boletos.
 
 ## Publicar en internet
 
@@ -231,6 +240,11 @@ npm start          # http://localhost:3000
 - `CACHE_CARTELERA_SEGUNDOS` (API): segundos que `GET /api/funciones` se sirve desde Redis. 15 por defecto; 0 la desactiva.
 - `CORS_ORIGINS` (en `docker-compose.yml`): orígenes que pueden llamar a la API. Por defecto `http://localhost:3000,http://127.0.0.1:3000`.
 - `RETENCION_SEGUNDOS` (API, opcional): vida del bloqueo de una butaca y de una reserva. Por defecto 300.
+- `CLAVE_INICIAL_PERSONAL` (API): contraseña inicial de las cuentas del personal (se cifra con bcrypt al arrancar y debe
+  cambiarse al entrar). Sin ella la API genera una aleatoria y la escribe una vez en su registro.
+- `QR_SECRET` (API): secreto (mín. 32 caracteres) con el que se firman los códigos dinámicos de los QR. Sin él se usa uno
+  aleatorio por arranque (reiniciar la API sólo obliga a reabrir la entrada). Genera uno con `openssl rand -base64 48`.
+- `RATE_LIMIT_ACCESO` (API, opcional): intentos de inicio de sesión, registro o cambio de contraseña por minuto e IP. Por defecto 10.
 
 ### Pruebas
 
@@ -243,6 +257,14 @@ docker run --rm -v "${PWD}/backend:/app" -w /app golang:1.26-alpine go run golan
 
 # Carga: 500 usuarios simultáneos contra la API local (no compra ni deja datos)
 docker run --rm -i -e BASE=http://host.docker.internal:8080 grafana/k6 run - < pruebas/script_carga.js
+
+# Entorno aislado con los límites del plan gratuito de Render (API en :18080, base aparte)
+docker compose -f pruebas/compose-carga.yml up -d --build
+# Masividad: registro, compra, contencion, cola, sse o lectura (crea datos en ese entorno)
+docker run --rm -i -e ESCENARIO=compra -e N=150 grafana/k6 run - < pruebas/masividad.js
+# Seguridad: 49 ataques (sin sesión, escalada de rol, IDOR, inyección SQL, fuerza bruta, tokens robados…)
+node pruebas/seguridad.mjs http://localhost:18080
+docker compose -f pruebas/compose-carga.yml down -v
 ```
 
 En PowerShell, la prueba de carga se ejecuta con
@@ -351,43 +373,73 @@ ocupan el mismo cupo. Para probarla: abre el preestreno en tres navegadores con 
 | Anti-bots (RF-53) | campo trampa + tiempo mínimo de envío + límite de 5 solicitudes/min por IP en reservas y cola |
 | Alta de películas | transacción en PostgreSQL con póster (`bytea`), validación del tipo real de imagen y de traslapes |
 
-Todavía en el navegador (pendiente: JWT + bcrypt): el inicio de sesión, la gestión de usuarios y la bitácora.
+### Seguridad
 
-| Método | Ruta | Uso |
-|---|---|---|
-| GET | `/api/funciones` | Cartelera vigente con butacas disponibles |
-| GET | `/api/funciones/{codigo\|id}/asientos[?usuario=ID]` | Butacas vendidas y retenidas (y con `usuario`, cuáles son suyas) |
-| GET | `/api/funciones/{codigo\|id}/stream` | **SSE**: evento `estado` (foto inicial) y `asientos` (`bloqueado`, `liberado`, `vendido`) |
-| POST | `/api/funciones/{codigo\|id}/asientos/{butaca}/bloqueo` | `{usuario_id}` → candado de la butaca por 5 min (409 si la tiene otro) |
-| DELETE | `/api/funciones/{codigo\|id}/bloqueos` | `{usuario_id, asientos}` → suelta butacas propias |
-| GET | `/api/salas/{sala}/fuera-servicio` | Butacas dañadas o fuera de servicio de la sala (no se venden en ninguna de sus funciones) |
-| POST | `/api/boletos/{token}/validar` | `{codigo, ventana}` → marca el boleto como utilizado (una sola vez) si el código dinámico de su QR es vigente; si no, lo rechaza sin consumirlo |
-| POST | `/api/salas/{sala}/fuera-servicio/{asiento}` | `{motivo: "danada"\|"fuera-servicio", por}` → retira la butaca de la venta |
-| DELETE | `/api/salas/{sala}/fuera-servicio/{asiento}?por=` | Devuelve la butaca a la venta |
-| POST | `/api/reservas` | `{funcion, usuario_id, asientos}` → retención de 5 min |
-| POST | `/api/reservas/{id}/pagar` | Pago idempotente → boletos y saldo |
-| DELETE | `/api/reservas/{id}` | Libera la retención |
-| POST | `/api/sesion` | `{correo, nombre, pase?}` → usuario y cuenta (bono de 800). Con reCAPTCHA activo, crear una cuenta nueva exige el `pase` (403 sin él) |
-| GET | `/api/usuarios/{id}/cuenta` | Saldo, movimientos y boletos |
-| POST | `/api/creditos/trivia` | `{usuario_id, partida, aciertos}` → acreditación única por partida |
-| GET | `/api/metricas` | KPIs del panel de administración |
-| GET | `/api/clientes/historial` | Compras de cada cliente agrupadas por película (boletos, visitas, gasto, última compra) |
-| POST | `/api/cola/{evento}` | `{usuario_id, pase?}` → entra a la cola virtual: posición en la fila o turno con vencimiento |
-| GET | `/api/cola/{evento}/{usuario}` | Posición o turno (consultarlo mantiene el lugar en la fila) |
-| DELETE | `/api/cola/{evento}/{usuario}` | Sale de la fila o libera el turno (p. ej. tras comprar) |
-| GET | `/api/ocupacion` | Ocupación de todas las funciones vigentes en una respuesta (panel) |
-| GET | `/api/peliculas` | Películas creadas desde el panel (ficha completa) |
-| POST | `/api/peliculas` | Agente/administrador: ficha + póster (data URL, máx. 2 MB) + funciones, en una transacción. 409 si alguna función se traslapa |
-| GET | `/api/peliculas/{slug}/poster` | Imagen del póster guardada en PostgreSQL |
-| POST | `/api/funciones` | `{pelicula, sala, inicio, formato, idioma, precio}` → programa una función (409 si se traslapa) |
-| POST | `/api/captcha/verificar` | `{token, accion}` → verificación de reCAPTCHA v3 (403 si no supera el puntaje) y `pase` de un solo uso |
+Se siguieron las guías de OWASP (Authentication, Session Management, Password Storage, Authorization, SQL Injection
+Prevention y Secure Headers Cheat Sheets).
+
+| Riesgo | Protección |
+|---|---|
+| Contraseñas robadas de la base | bcrypt (costo 10); nunca se guardan ni se envían en claro. Máx. 72 bytes (límite de bcrypt) |
+| Robo de sesión | token aleatorio de 256 bits en la cabecera `Authorization` (no en la URL ni en cookies: sin CSRF); la base guarda su SHA-256 |
+| Sesión olvidada abierta | vence a los 15 min sin actividad y a las 12 h en total, en el servidor y en el navegador |
+| Cierre de sesión | revoca el token en el servidor; "cerrar en todos los dispositivos"; se cierra en todas las pestañas |
+| Fuerza bruta | 10 intentos/min por IP, bloqueo de la cuenta 15 min tras 5 fallos, mismo mensaje y tiempo exista o no la cuenta |
+| Escalada de privilegios | cada ruta exige su rol en el servidor; el usuario sale de la sesión, nunca del cuerpo ni de la URL |
+| Datos ajenos (IDOR) | reservas, pagos, boletos, códigos QR y turnos sólo para su dueño (para los demás "no existen") |
+| Inyección SQL | todas las consultas son parametrizadas (`$1`, `$2`…); probado con 42 cargas maliciosas |
+| QR falsificado o capturado | código HMAC-SHA256 con secreto del servidor, cambia cada minuto; sólo el dueño lo obtiene |
+| Contraseña temporal | el personal y las cuentas creadas por el administrador deben cambiarla antes de usar el sistema |
+| Acciones de administrador | reconfirmar la contraseña (5 min) para gestionar usuarios; dar de baja cierra sus sesiones |
+| XSS, clickjacking | CSP estricta, `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, `Permissions-Policy` (cámara sólo propia) |
+| Ráfagas de inicios de sesión | máx. 2 cálculos de bcrypt a la vez: la compra y los mapas siguen respondiendo |
+
+En el plan gratuito de Render (0.1 CPU) el servidor procesa cerca de 1 inicio de sesión o registro por segundo, porque
+bcrypt es lento a propósito; ante una ola mayor responde "intenta en unos segundos" sin afectar al resto del sitio.
+
+| Método | Ruta | Acceso | Uso |
+|---|---|---|---|
+| POST | `/api/auth/registro` | público | `{nombre, correo, clave, pase?}` → cuenta de cliente (bono de 800) y sesión `{token, expira, usuario}` |
+| POST | `/api/auth/login` | público | `{correo, clave}` → `{token, expira, usuario}` (bloqueo tras 5 fallos) |
+| GET | `/api/auth/sesion` | sesión | Usuario de la sesión (el frontend la valida al cargar) |
+| POST | `/api/auth/logout` · `/api/auth/logout-todas` | sesión | Revoca la sesión actual o todas las del usuario |
+| POST | `/api/auth/clave` | sesión | `{actual, nueva}` → cambia la contraseña y cierra las demás sesiones |
+| POST | `/api/auth/reconfirmar` | admin | `{clave}` → habilita la gestión de usuarios 5 min |
+| GET | `/api/funciones` | público | Cartelera vigente con butacas disponibles |
+| GET | `/api/funciones/{codigo\|id}/asientos` | público | Butacas vendidas, retenidas y fuera de servicio |
+| GET | `/api/funciones/{codigo\|id}/stream` | público | **SSE**: evento `estado` (foto inicial) y `asientos` (`bloqueado`, `liberado`, `vendido`, `retirado`) |
+| GET | `/api/funciones/{codigo\|id}/mis-bloqueos` | cliente | Butacas que el cliente tiene bloqueadas (restaurar su selección) |
+| POST | `/api/funciones/{codigo\|id}/asientos/{butaca}/bloqueo` | cliente | Candado de la butaca por 5 min (409 si la tiene otro) |
+| DELETE | `/api/funciones/{codigo\|id}/bloqueos` | cliente | `{asientos}` → suelta butacas propias |
+| POST | `/api/reservas` | cliente | `{funcion, asientos}` → retención de 5 min |
+| POST | `/api/reservas/{id}/pagar` | dueño | Pago idempotente → boletos y saldo |
+| DELETE | `/api/reservas/{id}` | dueño | Libera la retención |
+| GET | `/api/cuenta` | cliente | Saldo, movimientos y boletos |
+| GET | `/api/boletos/{token}/codigos` | dueño | Códigos firmados del QR para los próximos 10 minutos |
+| POST | `/api/creditos/trivia` | cliente | `{partida, aciertos}` → acreditación única por partida |
+| POST | `/api/cola/{evento}` | cliente | `{pase?}` → entra a la cola virtual: posición en la fila o turno con vencimiento |
+| GET | `/api/cola/{evento}` | cliente | Posición o turno (consultarlo mantiene el lugar en la fila) |
+| DELETE | `/api/cola/{evento}` | cliente | Sale de la fila o libera el turno (p. ej. tras comprar) |
+| POST | `/api/boletos/{token}/validar` | agente, admin | `{codigo, ventana}` → marca el boleto como utilizado (una sola vez) si el código de su QR es vigente; si no, lo rechaza sin consumirlo |
+| GET | `/api/salas/{sala}/fuera-servicio` | agente, admin | Butacas dañadas o fuera de servicio de la sala |
+| POST · DELETE | `/api/salas/{sala}/fuera-servicio/{asiento}` | agente, admin | `{motivo: "danada"\|"fuera-servicio"}` → retira la butaca de la venta / la devuelve |
+| POST | `/api/peliculas` | agente, admin | Ficha + póster (data URL, máx. 2 MB) + funciones, en una transacción. 409 si alguna función se traslapa |
+| POST | `/api/funciones` | agente, admin | `{pelicula, sala, inicio, formato, idioma, precio}` → programa una función (409 si se traslapa) |
+| GET | `/api/metricas` | admin, auditor | KPIs del panel de administración |
+| GET | `/api/bitacora` | admin, auditor | Bitácora de auditoría del servidor (sesiones, ventas, validaciones, cambios) |
+| GET | `/api/clientes/historial` | admin | Compras de cada cliente agrupadas por película |
+| GET · POST | `/api/usuarios` | admin | Lista de cuentas · crear cuenta con contraseña temporal (exige reconfirmar) |
+| POST | `/api/usuarios/{id}` · `/api/usuarios/{id}/estado` | admin | Editar nombre y rol · dar de baja o reactivar (exige reconfirmar) |
+| GET | `/api/ocupacion` | público | Ocupación de todas las funciones vigentes en una respuesta (panel) |
+| GET | `/api/peliculas` · `/api/peliculas/{slug}/poster` | público | Películas creadas desde el panel y su póster |
+| POST | `/api/captcha/verificar` | público | `{token, accion}` → verificación de reCAPTCHA v3 (403 si no supera el puntaje) y `pase` de un solo uso |
 
 ```bash
 curl localhost:8080/api/funciones
-curl -X POST localhost:8080/api/reservas -d '{"funcion":"f5","usuario_id":1,"asientos":["C-04","C-05"]}'
-curl -X POST localhost:8080/api/reservas/<reserva_id>/pagar
+TOKEN=$(curl -s -X POST localhost:8080/api/auth/login -d '{"correo":"tu@correo.com","clave":"…"}' | jq -r .token)
+curl -X POST localhost:8080/api/reservas -H "Authorization: Bearer $TOKEN" -d '{"funcion":"f5","asientos":["C-04","C-05"]}'
+curl -X POST localhost:8080/api/reservas/<reserva_id>/pagar -H "Authorization: Bearer $TOKEN"
 curl localhost:8080/api/funciones/f5/asientos
-curl localhost:8080/api/metricas
 curl -N localhost:8080/api/funciones/f5/stream     # deja la terminal abierta y bloquea butacas desde el navegador
 ```
 
@@ -400,6 +452,5 @@ curl -N localhost:8080/api/funciones/f5/stream     # deja la terminal abierta y 
 3. Al reservar, las butacas bloqueadas por el cliente pasan a la reserva de forma atómica (todas o ninguna).
 4. Al pagar, la transacción en PostgreSQL y el índice único parcial de `boletos` son la última barrera.
 
-Pendiente para la siguiente iteración: autenticación con JWT y bcrypt (hoy el `usuario_id` viaja en el cuerpo de la
-solicitud y los permisos de rol, como crear películas, se aplican sólo en el frontend), usuarios y bitácora en la API,
-edición y baja de películas, envío de correo SMTP y pruebas de carga (k6) para RNF-01 y RNF-43.
+Pendiente para la siguiente iteración: edición y baja de películas, envío de correo SMTP (confirmación de cuenta y
+recuperación de contraseña) e inicio de sesión con proveedores externos.

@@ -116,6 +116,44 @@ type Boleto struct {
 	Inicio   time.Time `json:"inicio"`
 	Formato  string    `json:"formato"`
 	Idioma   string    `json:"idioma"`
+	Reserva  string    `json:"reserva"` // folio de la compra (su comprobante)
+}
+
+// ReservaCreada es la respuesta de una reserva: el precio lo fija el servidor con la tarifa vigente de la función.
+type ReservaCreada struct {
+	ID             string    `json:"reserva_id"`
+	Expira         time.Time `json:"expira"`
+	PrecioUnitario int       `json:"precio_unitario"`
+	Total          int       `json:"total"`
+}
+
+// Comprobante de una compra (folio = id de la reserva pagada). Firma = HMAC-SHA256 del servidor sobre sus datos:
+// cualquiera puede verificarlo con su QR, pero nadie puede fabricar uno válido.
+type Comprobante struct {
+	Folio          string    `json:"folio"`
+	Fecha          time.Time `json:"fecha"`
+	Cliente        string    `json:"cliente"`
+	Correo         string    `json:"correo,omitempty"`
+	Pelicula       string    `json:"pelicula"`
+	Funcion        string    `json:"funcion"`
+	Sala           string    `json:"sala"`
+	Inicio         time.Time `json:"inicio"`
+	Formato        string    `json:"formato"`
+	Idioma         string    `json:"idioma"`
+	Asientos       []string  `json:"asientos"`
+	PrecioUnitario int       `json:"precio_unitario"`
+	Total          int       `json:"total"`
+	Boletos        []Boleto  `json:"boletos,omitempty"`
+	Firma          string    `json:"firma,omitempty"`
+}
+
+// VerificacionComprobante es lo que ve cualquiera que escanea el QR de un comprobante (sin datos personales completos).
+type VerificacionComprobante struct {
+	Valido      bool         `json:"valido"`
+	Motivo      string       `json:"motivo"`
+	Comprobante *Comprobante `json:"comprobante,omitempty"`
+	Vigentes    int          `json:"vigentes"`   // boletos que aún permiten el acceso
+	Utilizados  int          `json:"utilizados"` // boletos ya validados en la entrada
 }
 
 // Movimiento de la cuenta de créditos.
@@ -146,6 +184,7 @@ type Reserva struct {
 type ResultadoPago struct {
 	ReservaID string   `json:"reserva_id"`
 	Boletos   []Boleto `json:"boletos"`
+	Total     int      `json:"total"` // lo cobrado, calculado en el servidor
 	Saldo     *int     `json:"saldo,omitempty"`
 	Repetido  bool     `json:"repetido,omitempty"`
 }

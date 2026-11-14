@@ -18,6 +18,12 @@ func (p *Postgres) Migrar(ctx context.Context) error {
 		if _, err := tx.Exec(ctx, esquemaFueraServicio); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, esquemaAutenticacion); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, esquemaRetenciones); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id, activo)
 			VALUES ('Venta en taquilla', $1, 'sin-acceso', 2, FALSE) ON CONFLICT (correo) DO NOTHING`, domain.CorreoTaquilla); err != nil {

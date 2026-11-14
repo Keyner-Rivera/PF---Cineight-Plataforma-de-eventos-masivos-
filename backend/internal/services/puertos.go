@@ -22,15 +22,15 @@ type Catalogo interface {
 
 // Ventas persiste pagos y validaciones de boletos.
 type Ventas interface {
-	BoletosDeReserva(ctx context.Context, reservaID string) []domain.Boleto
-	RegistrarVenta(ctx context.Context, r domain.Reserva) (saldoFinal int, err error)
+	BoletosDeReserva(ctx context.Context, reservaID string, usuarioID int64) []domain.Boleto
+	RegistrarVenta(ctx context.Context, r domain.Reserva, maxEvento int) (saldoFinal, total int, err error)
+	Comprobante(ctx context.Context, folio string, usuarioID int64) (domain.Comprobante, error)
 	ValidarBoleto(ctx context.Context, token string) (domain.Validacion, error)
+	BoletoDe(ctx context.Context, token string, usuarioID int64) (estado string, err error)
 }
 
 // Cuentas gestiona clientes y créditos.
 type Cuentas interface {
-	ExisteCliente(ctx context.Context, correo string) (bool, error)
-	VincularCliente(ctx context.Context, correo, nombre string) (id int64, saldo int, err error)
 	Cuenta(ctx context.Context, usuarioID int64) (domain.Cuenta, error)
 	AcreditarTrivia(ctx context.Context, usuarioID int64, partida string, monto int) (acreditado bool, saldo int, err error)
 	Metricas(ctx context.Context) (domain.Metricas, error)
@@ -66,6 +66,15 @@ type GuardiaAntiBots interface {
 // Auditoria registra operaciones críticas en la bitácora (RNF-22).
 type Auditoria interface {
 	Auditar(ctx context.Context, usuarioID *int64, accion, entidad string, valor any)
+}
+
+// Retenciones es el bloqueo transaccional de butacas en PostgreSQL (fuente de verdad de quién tiene cada butaca).
+type Retenciones interface {
+	RetenerSeleccion(ctx context.Context, funcionID int, asiento string, usuarioID int64, ttl time.Duration, maximo int) error
+	SoltarSeleccion(ctx context.Context, funcionID int, asientos []string, usuarioID int64) error
+	RetenerReserva(ctx context.Context, r domain.Reserva, ttl time.Duration, maxEvento int) (precio int, err error)
+	LiberarReserva(ctx context.Context, reservaID string, usuarioID int64) error
+	LimpiarRetencionesVencidas(ctx context.Context) (map[int][]string, error)
 }
 
 // Candados es el estado efímero de las butacas en Redis.

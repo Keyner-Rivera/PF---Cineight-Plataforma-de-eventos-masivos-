@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
-import { ChevronDown, LayoutDashboard, LogOut, ShieldCheck, Ticket } from "lucide-react";
+import { ChevronDown, KeyRound, LayoutDashboard, LogOut, MonitorSmartphone, ShieldCheck, Ticket } from "lucide-react";
 import { ROL_TXT } from "@/data/catalogo";
 import { useApp } from "@/store/AppProvider";
 import { useCerrarSesion } from "@/hooks/useCerrarSesion";
@@ -18,11 +19,13 @@ const iniciales = (nombre: string) =>
 
 /**
  * Usuario en la esquina superior derecha: avatar + nombre/correo. Al hacer clic despliega un menú
- * con los datos de la sesión y "Cerrar sesión". Se cierra con Esc, clic fuera o al elegir una opción.
+ * con los datos de la sesión, cambiar la contraseña y cerrar la sesión (en este dispositivo o en todos; el servidor la
+ * revoca). Se cierra con Esc, clic fuera o al elegir una opción.
  */
 export function MenuUsuario() {
-  const { usuario } = useApp();
+  const { usuario, abrirCambioClave, cerrarSesionesTodas, toast } = useApp();
   const cerrarSesion = useCerrarSesion();
+  const router = useRouter();
   const [abierto, setAbierto] = useState(false);
   const caja = useRef<HTMLDivElement>(null);
   const idMenu = useId();
@@ -94,6 +97,27 @@ export function MenuUsuario() {
                   Mis Entradas
                 </ItemEnlace>
               )}
+              <ItemBoton
+                icono={KeyRound}
+                onClick={() => {
+                  setAbierto(false);
+                  abrirCambioClave();
+                }}
+              >
+                Cambiar contraseña
+              </ItemBoton>
+              <ItemBoton
+                icono={MonitorSmartphone}
+                onClick={async () => {
+                  setAbierto(false);
+                  const r = await cerrarSesionesTodas();
+                  if (!r.ok) return toast(r.error!, "error");
+                  toast("Cerramos tu sesión en todos los dispositivos.", "ok");
+                  router.replace("/");
+                }}
+              >
+                Cerrar sesión en todos los dispositivos
+              </ItemBoton>
               <button
                 type="button"
                 role="menuitem"
@@ -111,6 +135,15 @@ export function MenuUsuario() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+function ItemBoton({ icono: Icono, onClick, children }: { icono: typeof Ticket; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button type="button" role="menuitem" onClick={onClick} className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left text-sm font-semibold text-tinta transition-colors hover:bg-panel-2">
+      <Icono aria-hidden className="h-4 w-4 text-arena" />
+      {children}
+    </button>
   );
 }
 

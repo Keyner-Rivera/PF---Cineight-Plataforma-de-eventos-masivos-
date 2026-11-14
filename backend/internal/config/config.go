@@ -14,23 +14,26 @@ import (
 
 // Config agrupa todos los parámetros de arranque.
 type Config struct {
-	Puerto         string
-	DatabaseURL    string
-	DBMaxConns     int32 // conexiones máximas del pool de PostgreSQL
-	DBMinConns     int32 // conexiones que el pool mantiene abiertas aunque no haya tráfico
-	RedisAddr      string
-	RedisURL       string // redis:// o rediss:// (TLS); si está definida tiene prioridad sobre RedisAddr
-	RedisPool      int    // conexiones máximas del pool de Redis (sin contar las 2 suscripciones de Pub/Sub)
-	OrigenesCORS   string
-	ConfiarProxy   bool          // detrás del proxy de un hosting: la IP del cliente sale de X-Forwarded-For
-	RateLimit      int64         // solicitudes por minuto por IP en rutas sensibles (reservas, cola)
-	RateLimitAlto  int64         // límite para rutas interactivas (bloqueo de butacas, captcha)
-	ColaCapacidad  int64         // clientes que eligen butacas a la vez desde la cola virtual
-	ColaTurno      time.Duration // tiempo de cada turno de la cola virtual
-	Retencion      time.Duration // vida del bloqueo de una butaca y de una reserva (RF-07)
-	CacheCartelera time.Duration // vida de la cartelera en la caché de Redis (0 = sin caché)
-	RecaptchaKey   string        // clave secreta de reCAPTCHA v3; vacía = verificación desactivada
-	RecaptchaMin   float64       // puntaje mínimo aceptado (0.0–1.0)
+	Puerto          string
+	DatabaseURL     string
+	DBMaxConns      int32 // conexiones máximas del pool de PostgreSQL
+	DBMinConns      int32 // conexiones que el pool mantiene abiertas aunque no haya tráfico
+	RedisAddr       string
+	RedisURL        string // redis:// o rediss:// (TLS); si está definida tiene prioridad sobre RedisAddr
+	RedisPool       int    // conexiones máximas del pool de Redis (sin contar las 2 suscripciones de Pub/Sub)
+	OrigenesCORS    string
+	ConfiarProxy    bool          // detrás del proxy de un hosting: la IP del cliente sale de X-Forwarded-For
+	RateLimit       int64         // solicitudes por minuto por IP en rutas sensibles (reservas, cola)
+	RateLimitAlto   int64         // límite para rutas interactivas (bloqueo de butacas, captcha)
+	ColaCapacidad   int64         // clientes que eligen butacas a la vez desde la cola virtual
+	ColaTurno       time.Duration // tiempo de cada turno de la cola virtual
+	Retencion       time.Duration // vida del bloqueo de una butaca y de una reserva (RF-07)
+	CacheCartelera  time.Duration // vida de la cartelera en la caché de Redis (0 = sin caché)
+	RecaptchaKey    string        // clave secreta de reCAPTCHA v3; vacía = verificación desactivada
+	RecaptchaMin    float64       // puntaje mínimo aceptado (0.0–1.0)
+	RateLimitAcceso int64         // intentos de inicio de sesión, registro o cambio de contraseña por minuto e IP
+	ClavePersonal   string        // contraseña inicial de las cuentas del personal (deben cambiarla al entrar)
+	SecretoQR       []byte        // firma los códigos dinámicos de los QR; vacío = uno aleatorio por arranque
 }
 
 // Cargar construye la configuración a partir del entorno y valida lo obligatorio.
@@ -52,12 +55,15 @@ func Cargar() (Config, error) {
 		RateLimit:     int64(entero("RATE_LIMIT", 5)),
 		RateLimitAlto: int64(entero("RATE_LIMIT_INTERACTIVO", 120)),
 		// Pocos turnos simultáneos: con un puñado de clientes ya se ve la fila avanzar (para producción, subirlo).
-		ColaCapacidad:  int64(entero("COLA_CAPACIDAD", 5)),
-		ColaTurno:      time.Duration(entero("COLA_TURNO_MINUTOS", 3)) * time.Minute,
-		Retencion:      time.Duration(entero("RETENCION_SEGUNDOS", 300)) * time.Second,
-		CacheCartelera: time.Duration(entero("CACHE_CARTELERA_SEGUNDOS", 15)) * time.Second,
-		RecaptchaKey:   os.Getenv("RECAPTCHA_SECRET"),
-		RecaptchaMin:   decimal("RECAPTCHA_MIN_SCORE", 0.5),
+		ColaCapacidad:   int64(entero("COLA_CAPACIDAD", 5)),
+		ColaTurno:       time.Duration(entero("COLA_TURNO_MINUTOS", 3)) * time.Minute,
+		Retencion:       time.Duration(entero("RETENCION_SEGUNDOS", 300)) * time.Second,
+		CacheCartelera:  time.Duration(entero("CACHE_CARTELERA_SEGUNDOS", 15)) * time.Second,
+		RecaptchaKey:    os.Getenv("RECAPTCHA_SECRET"),
+		RecaptchaMin:    decimal("RECAPTCHA_MIN_SCORE", 0.5),
+		RateLimitAcceso: int64(entero("RATE_LIMIT_ACCESO", 10)),
+		ClavePersonal:   os.Getenv("CLAVE_INICIAL_PERSONAL"),
+		SecretoQR:       []byte(os.Getenv("QR_SECRET")),
 	}
 	switch {
 	case c.DBMaxConns < 1:

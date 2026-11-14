@@ -1,39 +1,59 @@
 package domain
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base32"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// RotacionQR es cada cuánto cambia el código dinámico del QR de un boleto (igual que ROTACION_S del frontend).
+// RotacionQR es cada cuánto cambia el código dinámico del QR de un boleto.
 const RotacionQR = 60 * time.Second
+
+// CodigosPorConsulta es cuántos minutos de códigos recibe el dueño del boleto en una consulta: el teléfono puede
+// mostrar el QR aunque pierda la conexión en la fila de la sala durante ese tiempo.
+const CodigosPorConsulta = 10
 
 // VentanaQR es el número de ventana de RotacionQR que contiene el instante t.
 func VentanaQR(t time.Time) int64 { return t.Unix() / int64(RotacionQR/time.Second) }
 
-// CodigoDinamico deriva el código de 6 caracteres del QR a partir del token y la ventana. Es el mismo cálculo que
-// codigoDinamico() del frontend (djb2 con XOR sobre "token:ventana", en base 36), así el servidor puede comprobar
-// el código que muestra el teléfono del cliente.
-func CodigoDinamico(token string, ventana int64) string {
-	h := uint32(5381)
-	for _, c := range token + ":" + strconv.FormatInt(ventana, 10) {
-		h = h*33 ^ uint32(c)
-	}
-	s := strings.ToUpper(strconv.FormatUint(uint64(h), 36))
-	if len(s) < 7 {
-		s = strings.Repeat("0", 7-len(s)) + s
-	}
-	return s[len(s)-6:]
+// CodigoDinamico es el código de 6 caracteres del QR para una ventana: HMAC-SHA256 del token y la ventana con un
+// secreto que sólo conoce el servidor (en base 32: A–Z y 2–7). Sin el secreto no se puede generar un código válido
+// aunque se conozca el token, y una captura de pantalla deja de servir en un par de minutos.
+func CodigoDinamico(secreto []byte, token string, ventana int64) string {
+	m := hmac.New(sha256.New, secreto)
+	m.Write([]byte(token + ":" + strconv.FormatInt(ventana, 10)))
+	return base32.StdEncoding.EncodeToString(m.Sum(nil))[:6]
 }
 
-// CodigoQRVigente indica si el código corresponde al token y a una ventana actual. Acepta la ventana anterior y la
-// siguiente para tolerar el cambio de minuto y relojes de teléfono ligeramente desfasados; una captura de pantalla
-// de hace más de dos minutos ya no sirve.
-func CodigoQRVigente(token, codigo string, ventana int64, ahora time.Time) bool {
+// CodigosQR devuelve los códigos de las próximas CodigosPorConsulta ventanas a partir de la actual.
+func CodigosQR(secreto []byte, token string, ahora time.Time) (desde int64, codigos []string) {
+	desde = VentanaQR(ahora)
+	for i := range int64(CodigosPorConsulta) {
+		codigos = append(codigos, CodigoDinamico(secreto, token, desde+i))
+	}
+	return desde, codigos
+}
+
+// CodigoQRVigente indica si el código corresponde al token en la ventana indicada y ésta es la actual (se toleran
+// la anterior y la siguiente por el cambio de minuto y relojes desfasados). Con ventana 0 (código escrito a mano)
+// se prueban esas tres. La comparación es en tiempo constante.
+func CodigoQRVigente(secreto []byte, token, codigo string, ventana int64, ahora time.Time) bool {
 	actual := VentanaQR(ahora)
-	if ventana < actual-1 || ventana > actual+1 {
+	codigo = strings.ToUpper(strings.TrimSpace(codigo))
+	if len(codigo) != 6 {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(codigo), CodigoDinamico(token, ventana))
+	candidatas := []int64{ventana}
+	if ventana == 0 {
+		candidatas = []int64{actual, actual - 1, actual + 1}
+	}
+	for _, w := range candidatas {
+		if w >= actual-1 && w <= actual+1 && hmac.Equal([]byte(codigo), []byte(CodigoDinamico(secreto, token, w))) {
+			return true
+		}
+	}
+	return false
 }

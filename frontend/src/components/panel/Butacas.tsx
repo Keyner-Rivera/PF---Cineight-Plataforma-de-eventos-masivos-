@@ -16,7 +16,7 @@ const MOTIVOS: Record<MotivoFueraServicio, string> = { danada: "Dañada", "fuera
 /* ─────────── Butacas dañadas o fuera de servicio ─────────── */
 // Una butaca marcada no se vende en ninguna función de su sala hasta que se habilite de nuevo.
 export function Butacas() {
-  const { usuario, toast, registrar } = useApp();
+  const { toast } = useApp();
   const [salaId, setSalaId] = useState(SALAS[0].id);
   const [motivo, setMotivo] = useState<MotivoFueraServicio>("danada");
   const [lista, setLista] = useState<ButacaFueraServicioApi[] | null>(null);
@@ -54,12 +54,10 @@ export function Butacas() {
     setEnCurso(asiento);
     try {
       if (actual) {
-        await api.habilitarButaca(salaId, asiento, usuario?.correo ?? "");
-        registrar("BUTACA_HABILITADA", `${s.nombre} · ${asiento}`);
+        await api.habilitarButaca(salaId, asiento);
         toast(`Butaca ${asiento} habilitada de nuevo.`, "ok");
       } else {
-        await api.retirarButaca(salaId, asiento, motivo, usuario?.correo ?? "");
-        registrar("BUTACA_FUERA_SERVICIO", `${s.nombre} · ${asiento} · ${MOTIVOS[motivo]}`);
+        await api.retirarButaca(salaId, asiento, motivo);
         toast(`Butaca ${asiento} marcada como «${MOTIVOS[motivo].toLowerCase()}».`, "ok");
       }
     } catch (e) {

@@ -5,36 +5,46 @@ import { Boton } from "@/components/ui/Boton";
 import { useState } from "react";
 import { ROL_TXT } from "@/data/catalogo";
 import type { Rol } from "@/types/catalogo";
+import type { UsuarioApi } from "@/types/api";
 import { useApp } from "@/store/AppProvider";
+import { useUsuarios } from "@/hooks/useDatosServidor";
+import { api } from "@/services/api";
+import { mensaje } from "@/store/estado";
 import { Modal } from "@/components/ui/Modal";
 import { card, thCls } from "@/components/panel/Elementos";
 
 /* ─────────── Usuarios: crear, editar y dar de baja (RF-15, RF-44) ─────────── */
-type AccionUsuario = { tipo: "crear" } | { tipo: "editar"; correo: string } | { tipo: "estado"; correo: string; activo: boolean };
+// Todo se aplica en el servidor: exige la sesión del administrador reconfirmada hace menos de 5 minutos, impide
+// cambiar el propio rol o darse de baja, conserva al menos un administrador activo y cierra las sesiones de una cuenta
+// dada de baja o con el rol cambiado.
+type AccionUsuario = { tipo: "crear" } | { tipo: "editar"; u: UsuarioApi } | { tipo: "estado"; u: UsuarioApi; activo: boolean };
 
 const PERMISOS: [Rol, string][] = [
   ["cliente", "Cartelera, compra con créditos, Mis Entradas y trivia."],
-  ["agente", "Programación de funciones, inventario de salas y validación de accesos."],
+  ["agente", "Programación de funciones, butacas, inventario de salas y validación de accesos."],
   ["admin", "Control total: métricas, gestión de usuarios y roles, parámetros, reportes y bitácora."],
   ["auditor", "Sólo lectura de reportes y bitácora; no puede modificar información."],
 ];
 
 export function Usuarios() {
-  const { cuentas, usuario, adminVerificado, verificarAdmin, crearUsuario, editarUsuario, cambiarEstadoUsuario, toast } = useApp();
+  const { usuario, adminVerificado, verificarAdmin, toast } = useApp();
+  const { usuarios, recargar } = useUsuarios();
   const [filtro, setFiltro] = useState<Rol | "todos">("todos");
   const [busca, setBusca] = useState("");
   const [pendiente, setPendiente] = useState<AccionUsuario | null>(null); // acción que espera la reautenticación
   const [accion, setAccion] = useState<AccionUsuario | null>(null);
   const [clave, setClave] = useState("");
   const [errorClave, setErrorClave] = useState("");
-  const [intentos, setIntentos] = useState(0);
+  const [verificando, setVerificando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
   const [form, setForm] = useState({ nombre: "", correo: "", rol: "agente" as Rol, clave: "" });
   const [errorForm, setErrorForm] = useState("");
+  const lista = usuarios ?? [];
 
   const abrir = (a: AccionUsuario) => {
     setErrorForm("");
     if (a.tipo === "crear") setForm({ nombre: "", correo: "", rol: "agente", clave: "" });
-    if (a.tipo === "editar") setForm({ nombre: cuentas[a.correo].nombre, correo: a.correo, rol: cuentas[a.correo].rol, clave: "" });
+    if (a.tipo === "editar") setForm({ nombre: a.u.nombre, correo: a.u.correo, rol: a.u.rol, clave: "" });
     if (adminVerificado) setAccion(a);
     else {
       setClave("");
@@ -43,58 +53,56 @@ export function Usuarios() {
     }
   };
 
-  const confirmarIdentidad = (e: React.FormEvent) => {
+  // POST /api/auth/reconfirmar: el servidor cuenta los intentos fallidos y, si son demasiados, cierra la sesión.
+  const confirmarIdentidad = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (verificarAdmin(clave)) {
+    if (verificando || !clave) return;
+    setVerificando(true);
+    const r = await verificarAdmin(clave);
+    setVerificando(false);
+    setClave("");
+    if (r.ok) {
       setAccion(pendiente);
       setPendiente(null);
-      setIntentos(0);
-      return;
-    }
-    const n = intentos + 1;
-    setIntentos(n);
-    setClave("");
-    if (n >= 3) {
-      setPendiente(null);
-      setIntentos(0);
-      toast("Demasiados intentos fallidos. La acción fue cancelada y quedó registrada en la bitácora.", "error");
-    } else setErrorClave(`Contraseña incorrecta. Te quedan ${3 - n} intento(s).`);
+    } else setErrorClave(r.error!);
   };
 
-  const guardar = (e: React.FormEvent) => {
+  const guardar = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!accion) return;
-    const r =
-      accion.tipo === "crear"
-        ? crearUsuario(form)
-        : accion.tipo === "editar"
-          ? editarUsuario(accion.correo, { nombre: form.nombre, rol: form.rol })
-          : cambiarEstadoUsuario(accion.correo, accion.activo);
-    if (!r.ok) return setErrorForm(r.error!);
-    toast(
-      accion.tipo === "crear"
-        ? `Cuenta creada para ${form.correo} (${ROL_TXT[form.rol]}).`
-        : accion.tipo === "editar"
-          ? "Cambios guardados."
-          : accion.activo
-            ? "Cuenta reactivada."
-            : "Cuenta dada de baja. Su historial se conserva.",
-      "ok",
-    );
-    setAccion(null);
+    if (!accion || guardando) return;
+    setGuardando(true);
+    try {
+      if (accion.tipo === "crear") await api.crearUsuario(form);
+      else if (accion.tipo === "editar") await api.editarUsuario(accion.u.id, { nombre: form.nombre, rol: form.rol });
+      else await api.estadoUsuario(accion.u.id, accion.activo);
+      toast(
+        accion.tipo === "crear"
+          ? `Cuenta creada para ${form.correo} (${ROL_TXT[form.rol]}). Deberá cambiar la contraseña temporal al entrar.`
+          : accion.tipo === "editar"
+            ? "Cambios guardados."
+            : accion.activo
+              ? "Cuenta reactivada."
+              : "Cuenta dada de baja y sus sesiones cerradas. Su historial se conserva.",
+        "ok",
+      );
+      setAccion(null);
+      recargar();
+    } catch (err) {
+      setErrorForm(mensaje(err));
+    } finally {
+      setGuardando(false);
+    }
   };
 
-  const filas = Object.entries(cuentas)
-    .filter(([c, x]) => (filtro === "todos" || x.rol === filtro) && (c + x.nombre).toLowerCase().includes(busca.toLowerCase()))
-    .sort((a, b) => Number(b[1].activo) - Number(a[1].activo) || a[1].rol.localeCompare(b[1].rol));
-  const objetivo = accion && accion.tipo !== "crear" ? cuentas[accion.correo] : null;
+  const filas = lista.filter((x) => (filtro === "todos" || x.rol === filtro) && (x.correo + x.nombre).toLowerCase().includes(busca.toLowerCase()));
+  const objetivo = accion && accion.tipo !== "crear" ? accion.u : null;
 
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-2">
         {(["todos", "cliente", "agente", "admin", "auditor"] as const).map((r) => (
           <button key={r} onClick={() => setFiltro(r)} className={`chip ${filtro === r ? "!border-oro text-oro" : ""}`}>
-            {r === "todos" ? "Todos" : ROL_TXT[r]} <span className="text-tenue">{r === "todos" ? Object.keys(cuentas).length : Object.values(cuentas).filter((x) => x.rol === r).length}</span>
+            {r === "todos" ? "Todos" : ROL_TXT[r]} <span className="text-tenue">{r === "todos" ? lista.length : lista.filter((x) => x.rol === r).length}</span>
           </button>
         ))}
         <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por nombre o correo…" className="campo !mt-0 w-full sm:ml-auto sm:w-64" />
@@ -122,32 +130,35 @@ export function Usuarios() {
             </tr>
           </thead>
           <tbody>
-            {filas.map(([correo, c]) => {
-              const yo = correo === usuario?.correo;
+            {filas.map((c) => {
+              const yo = c.id === usuario?.id;
               return (
-                <tr key={correo} className={`border-b border-borde/60 last:border-0 ${c.activo ? "" : "opacity-55"}`}>
+                <tr key={c.id} className={`border-b border-borde/60 last:border-0 ${c.activo ? "" : "opacity-55"}`}>
                   <td className="py-3 pr-3">
                     <p className="font-bold">
                       {c.nombre} {yo && <span className="badge-borde ml-1">Tú</span>}
                     </p>
-                    <p className="text-[11px] text-tenue">{correo}</p>
+                    <p className="text-[11px] text-tenue">{c.correo}</p>
                   </td>
                   <td className="pr-3">
                     <span className={c.rol === "cliente" ? "badge-borde" : "badge-vino"}>{ROL_TXT[c.rol]}</span>
                   </td>
-                  <td className="pr-3 text-xs font-bold">{c.activo ? <span className="text-oro">● Activo</span> : <span className="text-salmon">● Dado de baja</span>}</td>
+                  <td className="pr-3 text-xs font-bold">
+                    {c.activo ? <span className="text-oro">● Activo</span> : <span className="text-salmon">● Dado de baja</span>}
+                    {c.debe_cambiar_clave && c.activo && <span className="mt-0.5 block text-[10px] font-semibold text-tenue">Contraseña temporal</span>}
+                  </td>
                   <td className="pr-3 text-xs text-tenue">{new Date(c.creado).toLocaleDateString("es-GT")}</td>
                   <td className="text-right">
                     <div className="flex justify-end gap-1.5">
-                      <Boton variante="borde" tamano="sm" icono={Pencil} onClick={() => abrir({ tipo: "editar", correo })} disabled={!c.activo}>
+                      <Boton variante="borde" tamano="sm" icono={Pencil} onClick={() => abrir({ tipo: "editar", u: c })} disabled={!c.activo}>
                         Editar
                       </Boton>
                       {c.activo ? (
-                        <button onClick={() => abrir({ tipo: "estado", correo, activo: false })} disabled={yo} title={yo ? "No puedes darte de baja a ti mismo" : ""} className="btn-borde px-3 py-2 text-[10px] hover:!border-rojo hover:!text-salmon">
+                        <button onClick={() => abrir({ tipo: "estado", u: c, activo: false })} disabled={yo} title={yo ? "No puedes darte de baja a ti mismo" : ""} className="btn-borde px-3 py-2 text-[10px] hover:!border-rojo hover:!text-salmon">
                           <Trash2 aria-hidden className="h-3.5 w-3.5" /> Eliminar
                         </button>
                       ) : (
-                        <button onClick={() => abrir({ tipo: "estado", correo, activo: true })} className="btn-borde px-3 py-2 text-[10px]">
+                        <button onClick={() => abrir({ tipo: "estado", u: c, activo: true })} className="btn-borde px-3 py-2 text-[10px]">
                           <RotateCcw aria-hidden className="h-3.5 w-3.5" /> Reactivar
                         </button>
                       )}
@@ -158,7 +169,8 @@ export function Usuarios() {
             })}
           </tbody>
         </table>
-        {filas.length === 0 && <p className="py-6 text-center text-sm text-tenue">No hay usuarios con ese filtro.</p>}
+        {usuarios === null && <p className="py-6 text-center text-sm text-tenue">Cargando cuentas…</p>}
+        {usuarios !== null && filas.length === 0 && <p className="py-6 text-center text-sm text-tenue">No hay usuarios con ese filtro.</p>}
       </div>
 
       <div className={card}>
@@ -172,8 +184,9 @@ export function Usuarios() {
           ))}
         </div>
         <p className="mt-3 text-[11px] text-apagado">
-          Reglas: sólo el Administrador del Sistema gestiona usuarios; no puede cambiar su propio rol ni darse de baja; siempre debe quedar al menos un administrador activo. Las
-          cuentas eliminadas se dan de baja (no pueden iniciar sesión) y su historial se conserva para auditoría.
+          Reglas (las aplica el servidor): sólo el Administrador del Sistema gestiona usuarios; no puede cambiar su propio rol ni darse de baja; siempre
+          debe quedar al menos un administrador activo. Las cuentas nuevas deben cambiar su contraseña temporal al entrar. Dar de baja una cuenta cierra
+          sus sesiones al instante y conserva su historial para auditoría.
         </p>
       </div>
 
@@ -183,9 +196,20 @@ export function Usuarios() {
           <p className="text-sm text-tenue">
             Para gestionar usuarios y roles vuelve a ingresar la contraseña de <b className="text-tinta">{usuario?.correo}</b>. La verificación dura 5 minutos.
           </p>
-          <input type="password" autoFocus value={clave} onChange={(e) => { setClave(e.target.value); setErrorClave(""); }} placeholder="Contraseña de administrador" autoComplete="current-password" className="campo" />
+          <input
+            type="password"
+            autoFocus
+            value={clave}
+            onChange={(e) => {
+              setClave(e.target.value);
+              setErrorClave("");
+            }}
+            placeholder="Contraseña de administrador"
+            autoComplete="current-password"
+            className="campo"
+          />
           {errorClave && <p className="text-sm text-salmon">{errorClave}</p>}
-          <Boton type="submit" icono={KeyRound} tamano="lg" className="w-full">
+          <Boton type="submit" icono={KeyRound} tamano="lg" cargando={verificando} className="w-full">
             Verificar y continuar
           </Boton>
         </form>
@@ -212,7 +236,7 @@ export function Usuarios() {
             Rol
             <select
               value={form.rol}
-              disabled={accion?.tipo === "editar" && accion.correo === usuario?.correo}
+              disabled={accion?.tipo === "editar" && accion.u.id === usuario?.id}
               onChange={(e) => setForm({ ...form, rol: e.target.value as Rol })}
               className="campo normal-case tracking-normal disabled:opacity-60"
             >
@@ -226,8 +250,8 @@ export function Usuarios() {
           <p className="-mt-2 text-[11px] text-tenue">{PERMISOS.find(([r]) => r === form.rol)?.[1]}</p>
           {accion?.tipo === "crear" && (
             <label className="etiqueta block">
-              Contraseña temporal (mín. 8 caracteres)
-              <input type="password" value={form.clave} onChange={(e) => setForm({ ...form, clave: e.target.value })} autoComplete="new-password" className="campo" />
+              Contraseña temporal (deberá cambiarla al entrar)
+              <input type="password" value={form.clave} onChange={(e) => setForm({ ...form, clave: e.target.value })} autoComplete="new-password" maxLength={72} className="campo" />
             </label>
           )}
           {errorForm && <p className="rounded-md border border-rojo/60 bg-vino/50 p-2.5 text-sm text-salmon">{errorForm}</p>}
@@ -235,7 +259,7 @@ export function Usuarios() {
             <button type="button" onClick={() => setAccion(null)} className="btn-borde flex-1">
               Cancelar
             </button>
-            <Boton type="submit" icono={accion?.tipo === "crear" ? UserPlus : Save} className="flex-1">
+            <Boton type="submit" icono={accion?.tipo === "crear" ? UserPlus : Save} cargando={guardando} className="flex-1">
               {accion?.tipo === "crear" ? "Crear cuenta" : "Guardar cambios"}
             </Boton>
           </div>
@@ -253,8 +277,8 @@ export function Usuarios() {
                 </>
               ) : (
                 <>
-                  <b className="text-tinta">{objetivo.nombre}</b> ({accion.correo}) ya no podrá iniciar sesión. Su historial de compras y operaciones se conserva para
-                  auditoría.
+                  <b className="text-tinta">{objetivo.nombre}</b> ({objetivo.correo}) ya no podrá iniciar sesión y sus sesiones abiertas se cerrarán. Su
+                  historial de compras y operaciones se conserva para auditoría.
                 </>
               )}
             </p>
@@ -263,7 +287,7 @@ export function Usuarios() {
               <button type="button" onClick={() => setAccion(null)} className="btn-borde flex-1">
                 Cancelar
               </button>
-              <Boton type="submit" icono={accion.activo ? RotateCcw : Trash2} className="flex-1">
+              <Boton type="submit" icono={accion.activo ? RotateCcw : Trash2} cargando={guardando} className="flex-1">
                 {accion.activo ? "Reactivar" : "Sí, eliminar"}
               </Boton>
             </div>

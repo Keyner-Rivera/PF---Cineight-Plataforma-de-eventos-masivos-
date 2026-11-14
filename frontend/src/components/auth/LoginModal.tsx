@@ -48,7 +48,7 @@ export function LoginModal() {
  */
 function Contenido({ modoInicial }: { modoInicial: "login" | "registro" }) {
   const router = useRouter();
-  const { toast, cuentas, iniciarSesion, registrarCliente, cerrarLogin, registrar } = useApp();
+  const { toast, iniciarSesion, registrarCliente, cerrarLogin } = useApp();
   const { verificar } = useRecaptcha();
   const [modo, setModo] = useState(modoInicial);
   const [nombre, setNombre] = useState("");
@@ -56,7 +56,6 @@ function Contenido({ modoInicial }: { modoInicial: "login" | "registro" }) {
   const [clave, setClave] = useState("");
   const [trampa, setTrampa] = useState(""); // honeypot: invisible para personas
   const [error, setError] = useState("");
-  const [fallos, setFallos] = useState(0);
   const [verificando, setVerificando] = useState(false);
   const [verClave, setVerClave] = useState(false);
   // Un campo muestra su error después de salir de él (o al intentar enviar), no mientras se escribe por primera vez.
@@ -86,14 +85,8 @@ function Contenido({ modoInicial }: { modoInicial: "login" | "registro" }) {
 
   // Capas 1 y 2 (locales) y 3 (reCAPTCHA verificado en el servidor). Devuelve un mensaje de error o null.
   const antiBot = async (accion: "login" | "registro"): Promise<string | null> => {
-    if (trampa) {
-      registrar("BOT_BLOQUEADO", "Campo trampa completado");
-      return "Detectamos actividad automatizada. Intenta de nuevo más tarde.";
-    }
-    if (msDesde(abierto.current) < TIEMPO_MINIMO_MS) {
-      registrar("BOT_BLOQUEADO", "Envío demasiado rápido");
-      return "Detectamos actividad automatizada (envío demasiado rápido).";
-    }
+    if (trampa) return "Detectamos actividad automatizada. Intenta de nuevo más tarde.";
+    if (msDesde(abierto.current) < TIEMPO_MINIMO_MS) return "Detectamos actividad automatizada (envío demasiado rápido).";
     const r = await verificar(accion);
     return r.ok ? null : r.error!;
   };
@@ -103,7 +96,6 @@ function Contenido({ modoInicial }: { modoInicial: "login" | "registro" }) {
     if (verificando) return;
     setError("");
     const c = normalizarCorreo(correo);
-    if (fallos >= PARAMETROS.intentosFallidos) return setError("Acceso bloqueado temporalmente por intentos fallidos (RF-43).");
     // Validación de formato antes de cualquier otra cosa: se marcan todos los campos y se enfoca el primero con error.
     setTocados({ nombre: true, correo: true, clave: true });
     const primero = (["nombre", "correo", "clave"] as const).find((k) => errores[k]);
@@ -113,24 +105,26 @@ function Contenido({ modoInicial }: { modoInicial: "login" | "registro" }) {
     }
 
     setVerificando(true);
-    const bot = await antiBot(modo);
-    setVerificando(false);
-    if (bot) return setError(bot);
-
-    // Las credenciales se procesan sólo después de superar la verificación anti-bots.
-    if (modo === "registro") {
-      const n = normalizarNombre(nombre);
-      const r = registrarCliente(n, c, clave);
-      if (!r.ok) return setError(r.error!);
-      toast(`Cuenta creada con ${PARAMETROS.bonoBienvenida} créditos de bienvenida. Enviamos un correo de confirmación a ${c}.`, "ok");
-      return terminar("cliente", n);
+    try {
+      const bot = await antiBot(modo);
+      if (bot) return setError(bot);
+      // Las credenciales se procesan sólo después de superar la verificación anti-bots, y se verifican en el servidor
+      // (bcrypt). Tras varios intentos fallidos el servidor bloquea la cuenta temporalmente (RF-43).
+      if (modo === "registro") {
+        const r = await registrarCliente(normalizarNombre(nombre), c, clave);
+        if (!r.ok) return setError(r.error!);
+        toast(`Cuenta creada con ${PARAMETROS.bonoBienvenida} créditos de bienvenida.`, "ok");
+        return terminar(r.usuario!.rol, r.usuario!.nombre);
+      }
+      const r = await iniciarSesion(c, clave);
+      if (!r.ok) {
+        setClave("");
+        return setError(r.error!);
+      }
+      terminar(r.usuario!.rol, r.usuario!.nombre);
+    } finally {
+      setVerificando(false);
     }
-    const r = iniciarSesion(c, clave);
-    if (!r.ok) {
-      setFallos((f) => f + 1);
-      return setError(`${r.error} Intentos restantes: ${Math.max(0, PARAMETROS.intentosFallidos - fallos - 1)}.`);
-    }
-    terminar(cuentas[c].rol, cuentas[c].nombre);
   };
 
   return (

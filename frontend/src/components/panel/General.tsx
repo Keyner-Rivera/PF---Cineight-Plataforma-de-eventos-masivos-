@@ -7,10 +7,10 @@ import { useState } from "react";
 import { ROL_TXT, SALAS, pelicula, sala } from "@/data/catalogo";
 import { fmtFecha, fmtHora } from "@/utils/formato";
 import type { Funcion, Rol } from "@/types/catalogo";
-import { useApp } from "@/store/AppProvider";
 import { Modal } from "@/components/ui/Modal";
 import { Poster } from "@/components/ui/Poster";
 import { useMetricas, useOcupacionVigente, useFilasVentas } from "@/hooks/usePanelDatos";
+import { useBitacora, useUsuarios } from "@/hooks/useDatosServidor";
 import { descargarCsv, csvVentas } from "@/utils/csv";
 import { thCls, Caja, Kpi, Barra } from "@/components/panel/Elementos";
 import { MapaSoloLectura } from "@/components/panel/MapaSoloLectura";
@@ -19,7 +19,8 @@ import { MapaSoloLectura } from "@/components/panel/MapaSoloLectura";
 
 
 export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
-  const { cuentas, bitacora } = useApp();
+  const { usuarios } = useUsuarios();
+  const bitacora = useBitacora() ?? [];
   const met = useMetricas();
   useOcupacionVigente();
   const filas = useFilasVentas(met);
@@ -33,14 +34,14 @@ export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
   const fuente = met ? "Se actualiza cada 5 s" : "Cargando métricas…";
 
   // ── Usuarios & roles
-  const lista = Object.entries(cuentas);
+  const lista = usuarios ?? [];
   const porRol = (["cliente", "agente", "admin", "auditor"] as Rol[]).map((r) => ({
     rol: r,
-    activos: lista.filter(([, c]) => c.rol === r && c.activo).length,
-    baja: lista.filter(([, c]) => c.rol === r && !c.activo).length,
+    activos: lista.filter((c) => c.rol === r && c.activo).length,
+    baja: lista.filter((c) => c.rol === r && !c.activo).length,
   }));
   const maxRol = Math.max(...porRol.map((r) => r.activos + r.baja), 1);
-  const recientes = [...lista].sort((a, b) => b[1].creado.localeCompare(a[1].creado)).slice(0, 4);
+  const recientes = [...lista].sort((a, b) => b.creado.localeCompare(a.creado)).slice(0, 4);
 
   const proximas = filas.filter((r) => new Date(r.f.inicio) > new Date()).sort((a, b) => a.f.inicio.localeCompare(b.f.inicio)).slice(0, 6);
 
@@ -69,7 +70,7 @@ export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
         <Caja
           icono={Users}
           titulo="Gestión de usuarios & roles"
-          sub={`${lista.filter(([, c]) => c.activo).length} cuentas activas · ${lista.filter(([, c]) => !c.activo).length} dadas de baja`}
+          sub={`${lista.filter((c) => c.activo).length} cuentas activas · ${lista.filter((c) => !c.activo).length} dadas de baja`}
           accion={
             <Boton variante="borde" tamano="sm" iconoFinal={ArrowRight} onClick={() => ir("usuarios")}>
               Administrar
@@ -93,11 +94,11 @@ export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
           </ul>
           <p className="etiqueta mb-2 mt-5">Altas recientes</p>
           <ul className="divide-y divide-borde/60 text-sm">
-            {recientes.map(([correo, c]) => (
-              <li key={correo} className="flex items-center justify-between gap-3 py-2">
+            {recientes.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2">
                 <span className="min-w-0">
                   <span className="block truncate font-semibold">{c.nombre}</span>
-                  <span className="block truncate text-[11px] text-tenue">{correo}</span>
+                  <span className="block truncate text-[11px] text-tenue">{c.correo}</span>
                 </span>
                 <span className={c.activo ? "badge-borde" : "badge-vino"}>{c.activo ? ROL_TXT[c.rol].replace(" del Sistema", "") : "Baja"}</span>
               </li>
@@ -109,7 +110,7 @@ export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
         <Caja
           icono={ScrollText}
           titulo="Bitácora de eventos"
-          sub={`${bitacora.length} registros · operaciones críticas (RNF-22)`}
+          sub={`Últimos ${bitacora.length} registros del servidor · operaciones críticas (RNF-22)`}
           accion={
             <Boton variante="borde" tamano="sm" iconoFinal={ArrowRight} onClick={() => ir("bitacora")}>
               Ver completa
@@ -158,7 +159,7 @@ export function General({ ir }: { ir: (seccion: IdSeccion) => void }) {
               f: () =>
                 descargarCsv("usuarios", [
                   ["nombre", "correo", "rol", "estado", "alta"],
-                  ...lista.map(([correo, c]) => [c.nombre, correo, ROL_TXT[c.rol], c.activo ? "activo" : "baja", c.creado.slice(0, 10)]),
+                  ...lista.map((c) => [c.nombre, c.correo, ROL_TXT[c.rol], c.activo ? "activo" : "baja", c.creado.slice(0, 10)]),
                 ]),
             },
           ].map((x) => (

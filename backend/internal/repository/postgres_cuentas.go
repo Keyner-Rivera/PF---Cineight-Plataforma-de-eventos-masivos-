@@ -2,35 +2,10 @@ package repository
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/cineight/backend/internal/domain"
 	"github.com/jackc/pgx/v5"
 )
-
-// VincularCliente crea (si no existe) al usuario y su cuenta de créditos con el bono de bienvenida.
-// Devuelve su id y saldo actual.
-func (p *Postgres) VincularCliente(ctx context.Context, correo, nombre string) (id int64, saldo int, err error) {
-	err = pgx.BeginFunc(ctx, p.db, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id) VALUES ($1, $2, 'pendiente-jwt', 1)
-			ON CONFLICT (correo) DO UPDATE SET correo = EXCLUDED.correo RETURNING id`, nombre, correo).Scan(&id); err != nil {
-			return err
-		}
-		tag, err := tx.Exec(ctx, `INSERT INTO cuentas_credito (usuario_id, saldo) VALUES ($1, $2) ON CONFLICT DO NOTHING`, id, domain.BonoBienvenida)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 1 {
-			if _, err := tx.Exec(ctx, `INSERT INTO movimientos_credito (usuario_id, tipo, monto, referencia) VALUES ($1, 'recarga', $2, $3)`,
-				id, domain.BonoBienvenida, fmt.Sprintf("bono-bienvenida:%d", id)); err != nil {
-				return err
-			}
-		}
-		return tx.QueryRow(ctx, `SELECT saldo FROM cuentas_credito WHERE usuario_id = $1`, id).Scan(&saldo)
-	})
-	return
-}
 
 // Cuenta devuelve saldo, últimos movimientos y boletos de un usuario.
 func (p *Postgres) Cuenta(ctx context.Context, usuarioID int64) (domain.Cuenta, error) {

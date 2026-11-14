@@ -17,8 +17,24 @@ CREATE TABLE usuarios (
   activo           BOOLEAN NOT NULL DEFAULT TRUE,
   intentos_fallidos SMALLINT NOT NULL DEFAULT 0,
   bloqueado_hasta  TIMESTAMPTZ,
-  creado           TIMESTAMPTZ NOT NULL DEFAULT now()
+  creado           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  debe_cambiar_clave BOOLEAN NOT NULL DEFAULT FALSE,  -- contraseña temporal: debe cambiarla al entrar
+  clave_actualizada  TIMESTAMPTZ                      -- NULL: aún sin contraseña en el servidor
 );
+
+-- Sesiones del servidor. Se guarda el SHA-256 del token, nunca el token: si la base se filtrara, no servirían.
+CREATE TABLE sesiones (
+  id_hash          TEXT PRIMARY KEY,
+  usuario_id       BIGINT NOT NULL REFERENCES usuarios(id),
+  creada           TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ultima_actividad TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expira           TIMESTAMPTZ NOT NULL,
+  elevada_hasta    TIMESTAMPTZ,              -- reconfirmó su contraseña (gestión de usuarios)
+  revocada         BOOLEAN NOT NULL DEFAULT FALSE,
+  ip               TEXT NOT NULL DEFAULT '',
+  agente           TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX ix_sesiones_usuario ON sesiones (usuario_id) WHERE NOT revocada;
 
 CREATE TABLE cuentas_credito (
   usuario_id  BIGINT PRIMARY KEY REFERENCES usuarios(id),
@@ -86,6 +102,20 @@ CREATE TABLE funciones (
 );
 CREATE INDEX ix_funciones_sala_inicio ON funciones (sala_id, inicio);
 
+-- Retenciones de butacas (bloqueo transaccional en la base durante la selección y el pago). Una fila por butaca:
+-- la clave primaria impide que dos clientes la retengan a la vez. reserva_id NULL = elegida en el mapa; con folio =
+-- reservada para pagar. Cada operación bloquea antes la fila de su función (SELECT … FOR UPDATE).
+CREATE TABLE retenciones (
+  funcion_id  INT NOT NULL REFERENCES funciones(id),
+  asiento     TEXT NOT NULL,
+  usuario_id  BIGINT NOT NULL REFERENCES usuarios(id),
+  reserva_id  TEXT,
+  expira      TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (funcion_id, asiento)
+);
+CREATE INDEX ix_retenciones_reserva ON retenciones (reserva_id) WHERE reserva_id IS NOT NULL;
+CREATE INDEX ix_retenciones_expira ON retenciones (expira);
+
 -- RF-54 / RNF-36: la restricción UNIQUE hace imposible vender dos veces la misma butaca de una función.
 CREATE TABLE boletos (
   id           BIGSERIAL PRIMARY KEY,
@@ -123,12 +153,12 @@ CREATE TABLE butacas_fuera_servicio (
 );
 
 -- ───────── Datos iniciales ─────────
--- Cuentas del personal. Los clientes se crean solos al registrarse (POST /api/sesion, con bono de bienvenida).
--- El hash es un marcador: el inicio de sesión todavía se valida en el frontend (pendiente: JWT + bcrypt).
+-- Cuentas del personal, todavía sin contraseña (clave_actualizada NULL): al arrancar, la API les asigna
+-- CLAVE_INICIAL_PERSONAL cifrada con bcrypt y deben cambiarla al entrar. Los clientes se crean al registrarse.
 INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id) VALUES
-  ('Carlos Agente',   'agente@cineight.gt',    '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 2),
-  ('Admin Sistema',   'admin@cineight.gt',     '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 3),
-  ('Laura Auditora',  'auditor@cineight.gt',   '$2a$10$Q9r1m0h0pZ3x1x7nqv8b0eW8m0n2Zq4S2Wc6l2y2a3o7xJ5h1m6yG', 4);
+  ('Carlos Agente',   'agente@cineight.gt',    'sin-clave', 2),
+  ('Admin Sistema',   'admin@cineight.gt',     'sin-clave', 3),
+  ('Laura Auditora',  'auditor@cineight.gt',   'sin-clave', 4);
 -- Usuario de sistema dueño de las ventas en taquilla del preestreno (no puede iniciar sesión).
 INSERT INTO usuarios (nombre, correo, hash_contrasena, rol_id, activo) VALUES
   ('Venta en taquilla', 'taquilla@cineight.gt', 'sin-acceso', 2, FALSE);

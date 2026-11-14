@@ -30,7 +30,7 @@ func (a *API) listarFunciones(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(cuerpo)
 }
 
-// GET /api/funciones/{id}/asientos[?usuario=ID] → {vendidos, retenidos, propios}
+// GET /api/funciones/{id}/asientos → {vendidos, retenidos, fuera_servicio} (pública: no dice quién tiene cada butaca)
 func (a *API) ocupacion(w http.ResponseWriter, r *http.Request) {
 	fid, err := a.s.Asientos.Resolver(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -42,11 +42,17 @@ func (a *API) ocupacion(w http.ResponseWriter, r *http.Request) {
 		fallar(w, err)
 		return
 	}
-	// ?usuario=ID: incluye qué butacas retenidas son del propio usuario (para restaurar su selección).
-	if uid, err := strconv.ParseInt(r.URL.Query().Get("usuario"), 10, 64); err == nil && uid > 0 {
-		o.Propios = a.s.Asientos.BloqueosDe(r.Context(), fid, uid)
-	}
 	httpx.JSON(w, 200, o)
+}
+
+// GET /api/funciones/{id}/mis-bloqueos → butacas que el usuario de la sesión tiene bloqueadas (restaurar su selección)
+func (a *API) misBloqueos(w http.ResponseWriter, r *http.Request) {
+	fid, err := a.s.Asientos.Resolver(r.Context(), r.PathValue("id"))
+	if err != nil {
+		fallar(w, err)
+		return
+	}
+	httpx.JSON(w, 200, map[string][]string{"propios": a.s.Asientos.BloqueosDe(r.Context(), fid, sesion(r).Usuario.ID)})
 }
 
 // GET /api/ocupacion → {f1: {vendidos, retenidos}, …} de todas las funciones vigentes en una respuesta.
@@ -59,35 +65,27 @@ func (a *API) ocupacionVigente(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, 200, o)
 }
 
-type solicitudBloqueo struct {
-	UsuarioID int64    `json:"usuario_id"`
-	Asientos  []string `json:"asientos"`
-}
-
-// POST /api/funciones/{id}/asientos/{asiento}/bloqueo  {usuario_id}
-// Candado atómico de la butaca durante la retención (SET NX EX).
+// POST /api/funciones/{id}/asientos/{asiento}/bloqueo
+// Candado atómico de la butaca durante la retención (SET NX EX), a nombre del usuario de la sesión.
 func (a *API) bloquear(w http.ResponseWriter, r *http.Request) {
-	var s solicitudBloqueo
-	if err := httpx.Leer(r, &s); err != nil {
-		httpx.Error(w, 400, "usuario_id requerido")
-		return
-	}
-	if err := a.s.Asientos.Bloquear(r.Context(), r.PathValue("id"), r.PathValue("asiento"), s.UsuarioID); err != nil {
+	if err := a.s.Asientos.Bloquear(r.Context(), r.PathValue("id"), r.PathValue("asiento"), sesion(r).Usuario.ID); err != nil {
 		fallar(w, err)
 		return
 	}
 	httpx.JSON(w, 201, map[string]any{"asiento": r.PathValue("asiento"), "estado": "bloqueado"})
 }
 
-// DELETE /api/funciones/{id}/bloqueos  {usuario_id, asientos}
+// DELETE /api/funciones/{id}/bloqueos  {asientos}
 // Suelta butacas que el usuario bloqueó (deseleccionar, salir de la página).
 func (a *API) desbloquear(w http.ResponseWriter, r *http.Request) {
-	var s solicitudBloqueo
+	var s struct {
+		Asientos []string `json:"asientos"`
+	}
 	if err := httpx.Leer(r, &s); err != nil {
 		httpx.Error(w, 400, "Solicitud inválida.")
 		return
 	}
-	if err := a.s.Asientos.Desbloquear(r.Context(), r.PathValue("id"), s.Asientos, s.UsuarioID); err != nil {
+	if err := a.s.Asientos.Desbloquear(r.Context(), r.PathValue("id"), s.Asientos, sesion(r).Usuario.ID); err != nil {
 		fallar(w, err)
 		return
 	}

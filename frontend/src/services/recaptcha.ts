@@ -47,7 +47,7 @@ export async function ejecutarRecaptcha(accion: AccionCaptcha): Promise<string> 
   return g.execute(CLAVE_SITIO, { action: accion });
 }
 
-// Pase anti-bots: el backend lo entrega al aprobar el token y lo exige para crear la cuenta en POST /api/sesion.
+// Pase anti-bots: el backend lo entrega al aprobar el token y lo exige para crear la cuenta en POST /api/auth/registro.
 // Sólo vive en memoria (vence en el servidor a los 10 min y es de un solo uso).
 let pase = "";
 export const guardarPase = (p: string | undefined) => {

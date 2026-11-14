@@ -7,13 +7,6 @@ import (
 	"github.com/cineight/backend/internal/domain"
 )
 
-// ExisteCliente indica si ya hay un usuario con ese correo (decide si /api/sesion crearía una cuenta nueva).
-func (p *Postgres) ExisteCliente(ctx context.Context, correo string) (bool, error) {
-	var existe bool
-	err := p.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM usuarios WHERE correo = $1)`, correo).Scan(&existe)
-	return existe, err
-}
-
 // HistorialClientes devuelve a cada cliente con sus compras agrupadas por película.
 // Sólo cuentan los boletos vigentes o usados (no los anulados ni reembolsados).
 // Los clientes sin compras aparecen con la lista vacía.

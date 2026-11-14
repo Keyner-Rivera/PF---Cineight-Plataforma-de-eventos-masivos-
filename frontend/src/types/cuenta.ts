@@ -2,19 +2,11 @@
 
 import type { Rol } from "./catalogo";
 
-export type Usuario = { nombre: string; correo: string; rol: Rol };
+export type Usuario = { id: number; nombre: string; correo: string; rol: Rol; debeCambiarClave: boolean };
 export type Movimiento = { id: string; tipo: "recarga" | "retención" | "débito" | "liberación" | "reembolso"; monto: number; ref: string; fecha: string };
-export type Boleto = { token: string; funcionId: string; asiento: string; precio: number; estado: "VÁLIDO" | "UTILIZADO" | "ANULADO" | "REEMBOLSADO"; emitido: string; titular: string };
-export type Reserva = { id: string; titular: string; funcionId: string; asientos: string[]; expira: number };
-export type Log = { fecha: string; usuario: string; accion: string; detalle: string };
-/** Cuenta para iniciar sesión (vive en el navegador hasta tener JWT). Saldo y boletos están en PostgreSQL. */
-export type Cuenta = {
-  nombre: string;
-  rol: Rol;
-  activo: boolean; // dado de baja: no puede iniciar sesión, pero su historial se conserva (ERS 3.1.11.4)
-  claveHash: string;
-  creado: string;
-};
+export type Boleto = { token: string; funcionId: string; asiento: string; precio: number; estado: "VÁLIDO" | "UTILIZADO" | "ANULADO" | "REEMBOLSADO"; emitido: string; titular: string; folio: string };
+/** `total`: lo que calculó el servidor al reservar (el pago lo vuelve a calcular). */
+export type Reserva = { id: string; titular: string; funcionId: string; asientos: string[]; expira: number; total: number };
 export type Resultado = { ok: boolean; error?: string };
 export type Validacion = { ok: boolean; motivo: string; boleto?: Boleto };
 // verificando: esperando /api/salud · conectado: la API responde · sin-conexion: la API no respondió

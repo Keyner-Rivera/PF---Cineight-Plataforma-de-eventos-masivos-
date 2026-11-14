@@ -1,6 +1,7 @@
 "use client";
 
-import { Lock } from "lucide-react";
+import Link from "next/link";
+import { Lock, Receipt } from "lucide-react";
 import { useState } from "react";
 import dynamic from "next/dynamic";
 import { fmtFecha, fmtHora } from "@/utils/formato";
@@ -70,6 +71,16 @@ export function GrupoBoletos({ boletos }: { boletos: Boleto[] }) {
             </div>
           </dl>
           {!varios && <p className="mt-3 text-[10px] tracking-wider text-apagado">N.º {enmascarar(boletos[0].token)}</p>}
+          {/* Un comprobante por compra (folio); varias compras de la misma función se muestran juntas. */}
+          <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+            {[...new Set(boletos.map((b) => b.folio))]
+              .filter((folio) => folio?.startsWith("R-"))
+              .map((folio) => (
+                <Link key={folio} href={`/comprobante/${folio}`} className="inline-flex items-center gap-1 text-[11px] font-bold text-arena underline-offset-2 hover:text-tinta hover:underline">
+                  <Receipt aria-hidden className="h-3 w-3" /> Comprobante {folio}
+                </Link>
+              ))}
+          </div>
         </div>
 
         {/* QR protegido: borroso hasta que el titular lo abre en el visor seguro */}

@@ -3,7 +3,6 @@
 import { useCallback, useEffect } from "react";
 import { ApiError, api } from "@/services/api";
 import { cargarRecaptcha, ejecutarRecaptcha, guardarPase, recaptchaConfigurado, type AccionCaptcha } from "@/services/recaptcha";
-import { useApp } from "@/store/AppProvider";
 import type { Resultado } from "@/types/cuenta";
 
 /**
@@ -11,13 +10,11 @@ import type { Resultado } from "@/types/cuenta";
  *
  * Al montar precarga el script de Google para que la verificación no retrase el envío.
  * `verificar(accion)` obtiene el token y lo valida en POST /api/captcha/verificar ANTES de procesar las credenciales.
- * El servidor responde con un pase de un solo uso que POST /api/sesion exige para crear una cuenta nueva.
+ * El servidor responde con un pase de un solo uso que POST /api/auth/registro exige para crear una cuenta nueva.
  *   - La decisión es del servidor (puntaje mínimo, acción esperada). Si no se puede verificar, se rechaza.
  *   - Sin NEXT_PUBLIC_RECAPTCHA_SITE_KEY la verificación se omite (quedan el campo trampa y el tiempo mínimo).
  */
 export function useRecaptcha() {
-  const { registrar } = useApp();
-
   useEffect(() => {
     if (recaptchaConfigurado) cargarRecaptcha().catch(() => {});
   }, []);
@@ -37,13 +34,12 @@ export function useRecaptcha() {
         return r.valido ? { ok: true } : { ok: false, error: "No pudimos confirmar que eres una persona. Inténtalo de nuevo en unos segundos." };
       } catch (e) {
         if (e instanceof ApiError && e.status === 403) {
-          registrar("BOT_BLOQUEADO", `reCAPTCHA rechazado (${accion})`);
           return { ok: false, error: "Detectamos actividad automatizada. Si eres una persona, espera un momento y vuelve a intentarlo." };
         }
         return { ok: false, error: "No se pudo verificar la solicitud con el servidor. Inténtalo de nuevo." };
       }
     },
-    [registrar],
+    [],
   );
 
   return { verificar, activo: recaptchaConfigurado };

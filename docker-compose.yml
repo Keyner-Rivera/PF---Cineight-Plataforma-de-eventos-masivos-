@@ -50,6 +50,11 @@ services:
       # reCAPTCHA v3: clave secreta (vacía = verificación desactivada) y puntaje mínimo aceptado.
       RECAPTCHA_SECRET: ${RECAPTCHA_SECRET:-}
       RECAPTCHA_MIN_SCORE: ${RECAPTCHA_MIN_SCORE:-0.5}
+      # Contraseña inicial del personal (admin@, agente@, auditor@cineight.gt): deben cambiarla al entrar.
+      # Sin ella la API genera una aleatoria y la escribe en su registro (docker compose logs api).
+      CLAVE_INICIAL_PERSONAL: ${CLAVE_INICIAL_PERSONAL:-}
+      # Firma de los códigos QR (mínimo 32 caracteres). Sin ella se usa una aleatoria por arranque.
+      QR_SECRET: ${QR_SECRET:-}
     ports: ["8080:8080"]
     depends_on:
       postgres: { condition: service_healthy }

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, CircleX } from "lucide-react";
+import { ChevronLeft, ChevronRight, CircleX, Loader2, WifiOff } from "lucide-react";
 import { BotonIcono } from "@/components/ui/Boton";
 import { useEffect, useState } from "react";
 import { AnimatePresence, m } from "framer-motion";
@@ -10,14 +10,21 @@ import { pelicula, sala } from "@/data/catalogo";
 import type { Boleto } from "@/types/cuenta";
 import { useApp } from "@/store/AppProvider";
 import { Modal } from "@/components/ui/Modal";
-import { ROTACION_S, codigoDinamico, enmascarar, ventanaActual } from "@/utils/seguridad";
+import { ROTACION_S, enmascarar, ventanaActual } from "@/utils/seguridad";
+import { api } from "@/services/api";
+import { mensaje } from "@/store/estado";
+import type { CodigosQrApi } from "@/types/api";
 
 const AUTOCIERRE_S = 120; // el visor se cierra solo a los 2 minutos
 
 // Visor seguro del QR. Se carga de forma diferida (next/dynamic): qrcode.react sólo se descarga
 // cuando el titular abre un boleto, no al entrar a Mis Entradas.
 export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Boleto[]; inicial: number; onCerrar: () => void }) {
-  const { usuario, funciones, registrar, toast } = useApp();
+  const { usuario, funciones, toast } = useApp();
+  // Códigos firmados por el servidor (HMAC con un secreto que el navegador no conoce) para los próximos minutos:
+  // el QR sigue funcionando aunque el teléfono pierda la señal en la fila de la sala.
+  const [codigos, setCodigos] = useState<Record<string, CodigosQrApi>>({});
+  const [errorCodigos, setErrorCodigos] = useState("");
   const [i, setI] = useState(inicial);
   const [dir, setDir] = useState(1);
   const [ahora, setAhora] = useState(() => Date.now());
@@ -37,9 +44,6 @@ export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Bolet
     return () => clearInterval(t);
   }, []);
 
-  useEffect(() => {
-    if (b.estado === "VÁLIDO") registrar("QR_VISUALIZADO", `${enmascarar(b.token)} · ${b.asiento}`);
-  }, [registrar, b.token, b.asiento, b.estado]);
 
   // Flechas del teclado, cierre al cambiar de pestaña y bloqueo de capturas.
   useEffect(() => {
@@ -66,7 +70,25 @@ export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Bolet
   }, [restanteCierre, onCerrar]);
 
   const ventana = ventanaActual(ahora);
-  const codigo = codigoDinamico(b.token, ventana);
+  const lote = codigos[b.token];
+  const codigo = lote?.codigos[ventana - lote.desde];
+  // Se piden al abrir la entrada y otra vez un minuto antes de que se acaben los códigos recibidos.
+  const pedirCodigos = b.estado === "VÁLIDO" && (!lote || ventana - lote.desde >= lote.codigos.length - 1);
+  useEffect(() => {
+    if (!pedirCodigos) return;
+    let vivo = true;
+    api
+      .codigosBoleto(b.token)
+      .then((c) => {
+        if (!vivo) return;
+        setCodigos((x) => ({ ...x, [b.token]: c }));
+        setErrorCodigos("");
+      })
+      .catch((err) => vivo && setErrorCodigos(mensaje(err)));
+    return () => {
+      vivo = false;
+    };
+  }, [pedirCodigos, b.token, ventana]);
   const seg = ROTACION_S - Math.floor((ahora / 1000) % ROTACION_S);
   const valido = b.estado === "VÁLIDO";
 
@@ -106,7 +128,19 @@ export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Bolet
                 className="relative w-fit select-none overflow-hidden rounded-lg border-4 border-tinta/90 bg-white p-3 sm:p-4"
                 draggable={false}
               >
-                {valido ? (
+                {valido && !codigo ? (
+                  <div className="grid h-[min(200px,55vw)] w-[min(200px,55vw)] place-items-center text-center text-black">
+                    {errorCodigos ? (
+                      <div>
+                        <WifiOff aria-hidden className="mx-auto h-8 w-8" />
+                        <p className="mt-1 text-xs font-bold">No se pudo obtener el código</p>
+                        <p className="mt-0.5 text-[11px] text-black/60">{errorCodigos}</p>
+                      </div>
+                    ) : (
+                      <Loader2 aria-label="Generando el código" className="h-8 w-8 animate-spin text-black/50" />
+                    )}
+                  </div>
+                ) : valido ? (
                   <>
                     <QRCodeSVG value={JSON.stringify({ t: b.token, f: f.id, a: b.asiento, c: codigo, w: ventana })} level="M" size={200} className="h-[min(200px,55vw)] w-[min(200px,55vw)]" />
                     {/* Marca de agua con el titular: desalienta la reventa de capturas */}
@@ -150,7 +184,7 @@ export default function VisorQR({ boletos, inicial, onCerrar }: { boletos: Bolet
           </div>
         )}
 
-        {valido && (
+        {valido && codigo && (
           <>
             <div className="mx-auto mt-3 flex w-fit items-center gap-2 rounded border border-borde bg-panel-2 px-3 py-1 text-xs">
               <span className="font-black tracking-[0.25em] text-oro">{codigo}</span>

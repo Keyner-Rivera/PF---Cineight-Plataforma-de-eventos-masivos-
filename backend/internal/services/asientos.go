@@ -10,18 +10,41 @@ import (
 	"github.com/cineight/backend/internal/domain"
 )
 
-// Asientos gestiona el mapa de butacas en tiempo real: candados individuales (SET NX EX)
-// y la difusión de cada cambio a los clientes conectados por SSE.
+// Asientos gestiona el mapa de butacas: cada butaca elegida se retiene en PostgreSQL (transacción con la función
+// bloqueada: quien decide si está libre es la base) y en Redis (candado SET NX EX para el mapa en tiempo real), y cada
+// cambio se difunde a los clientes conectados por SSE.
 type Asientos struct {
-	catalogo  Catalogo
-	candados  Candados
-	turnos    Turnos
-	retencion time.Duration
+	catalogo    Catalogo
+	candados    Candados
+	retenciones Retenciones
+	turnos      Turnos
+	retencion   time.Duration
 }
 
 // NuevoAsientos crea el servicio. `turnos` exige turno de la cola virtual en las funciones de preestreno.
-func NuevoAsientos(c Catalogo, k Candados, t Turnos, retencion time.Duration) *Asientos {
-	return &Asientos{catalogo: c, candados: k, turnos: t, retencion: retencion}
+func NuevoAsientos(c Catalogo, k Candados, rt Retenciones, t Turnos, retencion time.Duration) *Asientos {
+	return &Asientos{catalogo: c, candados: k, retenciones: rt, turnos: t, retencion: retencion}
+}
+
+// errorDeRetencion traduce los errores de las retenciones en PostgreSQL a mensajes para el cliente.
+func errorDeRetencion(err error, asiento string) error {
+	que := "Alguna de las butacas"
+	if asiento != "" {
+		que = "La butaca " + asiento
+	}
+	switch {
+	case errors.Is(err, domain.ErrButacaOcupada):
+		return domain.Conflicto(que + " acaba de ser tomada por otro cliente.")
+	case errors.Is(err, domain.ErrAsientoVendido):
+		return domain.Conflicto(que + " ya no está disponible.")
+	case errors.Is(err, domain.ErrLimiteButacas):
+		return domain.Conflicto(fmt.Sprintf("Puedes bloquear hasta %d butacas a la vez.", domain.MaxAsientosPorCompra))
+	case errors.Is(err, domain.ErrLimiteEvento):
+		return domain.Conflicto(fmt.Sprintf("El preestreno permite %d boletos por cliente.", domain.MaxBoletosPorEvento))
+	case errors.Is(err, domain.ErrReservaVencida):
+		return domain.Expirado("La reserva expiró y los asientos fueron liberados.")
+	}
+	return errorDeFuncion(err)
 }
 
 // Resolver convierte el código público o el id de una función en su id numérico.
@@ -105,13 +128,20 @@ func (s *Asientos) Bloquear(ctx context.Context, ref, asiento string, usuarioID 
 	if vendidos > 0 {
 		return domain.Conflicto("La butaca " + asiento + " ya no está disponible.")
 	}
-
+	// 1. PostgreSQL: transacción con la función bloqueada (FOR UPDATE) que verifica y retiene la butaca.
+	if err := s.retenciones.RetenerSeleccion(ctx, fid, asiento, usuarioID, s.retencion, domain.MaxAsientosPorCompra); err != nil {
+		return errorDeRetencion(err, asiento)
+	}
+	// 2. Redis: candado para el mapa en tiempo real. Si no se puede, se deshace la retención en la base.
 	switch r, err := s.candados.Bloquear(ctx, fid, asiento, usuarioID, s.retencion, domain.MaxAsientosPorCompra); {
 	case err != nil:
+		_ = s.retenciones.SoltarSeleccion(ctx, fid, []string{asiento}, usuarioID)
 		return err
 	case r == 0:
+		_ = s.retenciones.SoltarSeleccion(ctx, fid, []string{asiento}, usuarioID)
 		return domain.Conflicto("La butaca " + asiento + " acaba de ser tomada por otro cliente.")
 	case r < 0:
+		_ = s.retenciones.SoltarSeleccion(ctx, fid, []string{asiento}, usuarioID)
 		return domain.Conflicto(fmt.Sprintf("Puedes bloquear hasta %d butacas a la vez.", domain.MaxAsientosPorCompra))
 	case r == 2:
 		return nil // renovación de un bloqueo propio: los demás clientes ya la ven bloqueada
@@ -128,6 +158,9 @@ func (s *Asientos) Desbloquear(ctx context.Context, ref string, asientos []strin
 	}
 	fid, err := s.Resolver(ctx, ref)
 	if err != nil {
+		return err
+	}
+	if err := s.retenciones.SoltarSeleccion(ctx, fid, asientos, usuarioID); err != nil {
 		return err
 	}
 	liberadas, err := s.candados.LiberarBloqueos(ctx, fid, asientos, usuarioID)

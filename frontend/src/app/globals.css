@@ -200,3 +200,21 @@ body {
 .grecaptcha-badge {
   visibility: hidden;
 }
+
+/* Comprobante de compra: al imprimir (o guardar como PDF) sólo sale la hoja, en blanco y negro legible */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .comprobante-imprimible,
+  .comprobante-imprimible * {
+    visibility: visible;
+    color: #000 !important;
+    background: transparent !important;
+    border-color: #999 !important;
+  }
+  .comprobante-imprimible {
+    position: absolute;
+    inset: 0 0 auto 0;
+  }
+}

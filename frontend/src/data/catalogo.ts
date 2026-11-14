@@ -6,15 +6,6 @@ import type { Categoria, EstrenoConCola, Funcion, Pelicula, Pregunta, Rol, Sala 
 
 // Cuentas del personal que existen desde la primera visita (los clientes se registran solos).
 // El administrador crea, edita o da de baja las demás desde Panel → Usuarios & roles.
-export const PERSONAL_INICIAL: { rol: Rol; nombre: string; correo: string }[] = [
-  { rol: "admin", nombre: "Admin Sistema", correo: "admin@cineight.gt" },
-  { rol: "agente", nombre: "Carlos Agente", correo: "agente@cineight.gt" },
-  { rol: "auditor", nombre: "Laura Auditora", correo: "auditor@cineight.gt" },
-];
-
-// Contraseña inicial del personal. Pendiente: autenticación en el servidor (JWT + bcrypt), que permitirá cambiarla.
-export const CLAVE_INICIAL = "cineight123";
-
 export const ROL_TXT: Record<Rol, string> = { cliente: "Cliente", agente: "Agente Operativo", admin: "Administrador del Sistema", auditor: "Auditor" };
 
 export const SALAS: Sala[] = [

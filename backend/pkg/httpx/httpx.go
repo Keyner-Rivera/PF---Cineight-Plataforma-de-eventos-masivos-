@@ -34,12 +34,25 @@ func EventoSSE(w io.Writer, evento string, v any) error {
 	return err
 }
 
-// CabecerasJSON fija en toda respuesta Content-Type: application/json y X-Content-Type-Options: nosniff.
+// CabecerasSeguridad fija en toda respuesta las cabeceras de OWASP Secure Headers para una API:
+//   - Content-Type JSON y nosniff: el navegador no interpreta una respuesta como HTML o script.
+//   - CSP "default-src 'none'" y frame-ancestors/X-Frame-Options: una respuesta de la API no puede ejecutar nada
+//     ni mostrarse dentro de otra página (clickjacking).
+//   - Referrer-Policy no-referrer y, detrás del proxy HTTPS del hosting, HSTS (sólo HTTPS durante 2 años).
+//
 // Los handlers que entregan otro contenido (pósters, stream SSE) reemplazan el Content-Type antes de escribir.
-func CabecerasJSON(next http.Handler) http.Handler {
+func CabecerasSeguridad(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		h := w.Header()
+		h.Set("Content-Type", "application/json; charset=utf-8")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		if ConfiarProxy {
+			h.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

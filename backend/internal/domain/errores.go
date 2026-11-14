@@ -24,6 +24,7 @@ func Conflicto(msg string) error    { return &Error{Estado: http.StatusConflict,
 func Expirado(msg string) error     { return &Error{Estado: http.StatusGone, Mensaje: msg} }
 func SinSaldo(msg string) error     { return &Error{Estado: http.StatusPaymentRequired, Mensaje: msg} }
 func Prohibido(msg string) error    { return &Error{Estado: http.StatusForbidden, Mensaje: msg} }
+func NoAutorizado(msg string) error { return &Error{Estado: http.StatusUnauthorized, Mensaje: msg} }
 func Demasiadas(msg string) error   { return &Error{Estado: http.StatusTooManyRequests, Mensaje: msg} }
 
 // invalidoPor es un 400 que además se reconoce con errors.Is(err, causa).
@@ -62,6 +63,14 @@ var ErrFuncionIniciada = errors.New("la función ya comenzó")
 // ErrAsientoInexistente: la butaca tiene formato válido pero no existe en la sala de la función (p. ej. J-12 en una
 // sala de 6 filas). Sin esta revisión se podrían vender butacas fantasma y superar el aforo.
 var ErrAsientoInexistente = errors.New("la butaca no existe en la sala")
+
+// Errores de las retenciones en PostgreSQL (bloqueo transaccional de butacas durante la selección y el pago).
+var (
+	ErrButacaOcupada  = errors.New("la butaca está retenida por otro cliente")
+	ErrLimiteButacas  = errors.New("límite de butacas retenidas por cliente")
+	ErrLimiteEvento   = errors.New("límite de boletos del preestreno")
+	ErrReservaVencida = errors.New("la reserva venció o no corresponde a sus butacas")
+)
 
 // ErrNoDisponible envuelve las fallas de conexión con Redis: la API responde 503 en lugar de un error interno.
 var ErrNoDisponible = errors.New("servicio de reservas no disponible")

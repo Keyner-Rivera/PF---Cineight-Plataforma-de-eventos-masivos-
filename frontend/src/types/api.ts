@@ -16,7 +16,8 @@ export type FuncionApi = {
   disponibles: number;
 };
 export type AsientosApi = { vendidos: string[]; retenidos: string[]; fuera_servicio?: string[]; propios?: string[] };
-export type ReservaApi = { reserva_id: string; expira: string };
+/** Reserva creada: el precio lo fija el servidor con la tarifa vigente de la función. */
+export type ReservaApi = { reserva_id: string; expira: string; precio_unitario: number; total: number };
 /** Boleto con los datos de su función (sirven para mostrarlo aunque la función ya haya terminado). */
 export type BoletoApi = {
   token: string;
@@ -30,11 +31,39 @@ export type BoletoApi = {
   inicio: string;
   formato: string;
   idioma: string;
+  /** Folio de la compra (su comprobante). */
+  reserva: string;
 };
-export type PagoApi = { reserva_id: string; boletos: BoletoApi[]; saldo?: number; repetido?: boolean };
+/** `total`: lo cobrado, calculado por el servidor dentro de la transacción del pago. */
+export type PagoApi = { reserva_id: string; boletos: BoletoApi[]; total?: number; saldo?: number; repetido?: boolean };
+/** Comprobante de una compra; `firma` (HMAC del servidor) permite verificarlo con su QR. */
+export type ComprobanteApi = {
+  folio: string;
+  fecha: string;
+  cliente: string;
+  correo?: string;
+  pelicula: string;
+  funcion: string;
+  sala: string;
+  inicio: string;
+  formato: string;
+  idioma: string;
+  asientos: string[];
+  precio_unitario: number;
+  total: number;
+  firma?: string;
+};
+export type VerificacionComprobanteApi = { valido: boolean; motivo: string; comprobante?: ComprobanteApi; vigentes: number; utilizados: number };
 export type MovimientoApi = { id: number; tipo: "recarga" | "retencion" | "debito" | "liberacion" | "reembolso"; monto: number; referencia: string; fecha: string };
 export type CuentaApi = { saldo: number; movimientos: MovimientoApi[]; boletos: BoletoApi[] };
-export type SesionApi = { usuario_id: number; saldo: number };
+/** Usuario autenticado (o una cuenta en la gestión de usuarios). */
+export type UsuarioApi = { id: number; nombre: string; correo: string; rol: "cliente" | "agente" | "admin" | "auditor"; activo: boolean; creado: string; debe_cambiar_clave: boolean };
+/** Respuesta de iniciar sesión o registrarse: el token sólo se recibe aquí. */
+export type SesionIniciadaApi = { token: string; expira: string; usuario: UsuarioApi };
+export type SesionApi = { usuario: UsuarioApi; expira: string; elevada_hasta: string | null };
+/** Códigos dinámicos del QR de un boleto: `codigos[i]` vale en la ventana `desde + i` (de `rotacion_segundos`). */
+export type CodigosQrApi = { desde: number; codigos: string[]; rotacion_segundos: number };
+export type BitacoraApi = { fecha: string; usuario: string; accion: string; detalle: string };
 export type TriviaApi = { acreditado: boolean; monto: number; saldo: number };
 export type ValidacionApi = { ok: boolean; motivo: string; boleto?: BoletoApi; titular?: string };
 export type MetricasApi = {
@@ -73,7 +102,7 @@ export type NuevaFuncionApi = { sala: string; inicio: string; formato: string; i
 
 /**
  * Resultado de POST /api/captcha/verificar. `activo` = false cuando el servidor no tiene clave secreta configurada.
- * `pase`: comprobante de un solo uso para crear la cuenta en POST /api/sesion.
+ * `pase`: comprobante de un solo uso para crear la cuenta en POST /api/auth/registro.
  */
 export type CaptchaApi = { valido: boolean; puntaje: number; accion?: string; motivo?: string; activo: boolean; pase?: string };
 

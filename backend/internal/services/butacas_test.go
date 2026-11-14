@@ -46,7 +46,7 @@ func (auditoriaMuda) Auditar(context.Context, *int64, string, string, any) {}
 func TestRetirarYHabilitarButaca(t *testing.T) {
 	repo := &mantenimientoFalso{fuera: map[string]string{}}
 	invalidada := false
-	s := NuevoButacas(repo, NuevoAsientos(&catalogoFalso{}, nuevosCandados(), nil, time.Minute), auditoriaMuda{}, func(context.Context) { invalidada = true })
+	s := NuevoButacas(repo, NuevoAsientos(&catalogoFalso{}, nuevosCandados(), nuevasRetenciones(), nil, time.Minute), auditoriaMuda{}, func(context.Context) { invalidada = true })
 	ctx := context.Background()
 
 	if err := s.Retirar(ctx, "s1", "C-04", "danada", "admin@cineight.gt"); err != nil || repo.fuera["C-04"] != "danada" {

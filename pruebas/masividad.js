@@ -1,6 +1,7 @@
 // Pruebas de masividad de la API de Cineight con k6. ESCENARIO = registro | compra | contencion | cola | sse | lectura
-//   registro    N clientes registrándose a la vez (10 registros cada uno); cada cuenta debe recibir 800 créditos.
-//   compra      N clientes que se registran y compran 2 butacas (bloqueo → reserva → pago) al mismo tiempo.
+//   registro    N clientes registrándose a la vez (3 registros cada uno); cada cuenta debe recibir 800 créditos.
+//               La contraseña se cifra con bcrypt (lento a propósito): mide cuántos registros por segundo aguanta.
+//   compra      N clientes con sesión ya iniciada compran 2 butacas (bloqueo → reserva → pago) al mismo tiempo.
 //   contencion  N clientes intentan pagar la MISMA butaca en el mismo instante: sólo uno debe lograrlo.
 //   cola        N clientes entran a la cola del preestreno a la vez: sólo COLA_CAPACIDAD reciben turno.
 //   sse         N mapas de butacas abiertos en vivo (15 s cada uno).
@@ -25,7 +26,7 @@ const limitados = new Counter("respuestas_429");
 const duracionCompra = new Trend("duracion_compra_completa", true);
 
 const ESCENARIOS = {
-  registro: { executor: "shared-iterations", vus: N || 200, iterations: (N || 200) * 10, maxDuration: "5m" },
+  registro: { executor: "shared-iterations", vus: N || 100, iterations: (N || 100) * 3, maxDuration: "8m" },
   compra: { executor: "per-vu-iterations", vus: N || 300, iterations: 1, maxDuration: "5m" },
   contencion: { executor: "per-vu-iterations", vus: N || 300, iterations: 1, maxDuration: "2m" },
   cola: { executor: "per-vu-iterations", vus: N || 300, iterations: 1, maxDuration: "2m" },
@@ -35,20 +36,22 @@ const ESCENARIOS = {
 
 export const options = {
   scenarios: { [ESC]: ESCENARIOS[ESC] },
-  setupTimeout: "5m",
+  setupTimeout: "10m",
   summaryTrendStats: ["avg", "med", "p(95)", "p(99)", "max"],
   thresholds: { respuestas_5xx: ["count<1"] },
 };
 
 const ip = (n) => `10.${(n >> 16) & 255}.${(n >> 8) & 255}.${n & 255}`;
-const cab = (n) => ({ headers: { "Content-Type": "application/json", "X-Forwarded-For": ip(n) } });
+// Cada solicitud de un cliente lleva su sesión en la cabecera Authorization (como el navegador).
+const cab = (n, token) => ({ headers: { "Content-Type": "application/json", "X-Forwarded-For": ip(n), ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
 function anotar(r) {
   if (r.status >= 500 || r.status === 0) fallasServidor.add(1, { estado: String(r.status) });
   if (r.status === 429) limitados.add(1);
   return r;
 }
-const post = (ruta, cuerpo, n, extra = {}) => anotar(http.post(BASE + ruta, cuerpo === undefined ? null : JSON.stringify(cuerpo), { ...cab(n), ...extra }));
-const get = (ruta, n, extra = {}) => anotar(http.get(BASE + ruta, { ...cab(n), ...extra }));
+const post = (ruta, cuerpo, n, extra = {}, token) => anotar(http.post(BASE + ruta, cuerpo === undefined ? null : JSON.stringify(cuerpo), { ...cab(n, token), ...extra }));
+const get = (ruta, n, extra = {}, token) => anotar(http.get(BASE + ruta, { ...cab(n, token), ...extra }));
+const CLAVE = "Palomitas#Dulces77";
 
 const letras = (n) => {
   let t = "";
@@ -56,10 +59,26 @@ const letras = (n) => {
   while (n > 0);
   return t.charAt(0).toUpperCase() + t.slice(1);
 };
+const datosRegistro = (n, etiqueta) => ({ nombre: "Cliente " + letras(n), correo: `carga-${RUN}-${etiqueta}-${n}@prueba.gt`, clave: CLAVE });
+
+// Registra un cliente y devuelve su token de sesión ("" si falló).
 function registrar(n, etiqueta) {
-  const r = post("/api/sesion", { correo: `carga-${RUN}-${etiqueta}-${n}@prueba.gt`, nombre: "Cliente " + letras(n) }, n, { tags: { paso: "registro" } });
-  check(r, { "registro 200": (x) => x.status === 200, "bono de 800": (x) => x.status === 200 && x.json("saldo") === 800 });
-  return r.status === 200 ? r.json("usuario_id") : 0;
+  const r = post("/api/auth/registro", datosRegistro(n, etiqueta), n, { tags: { paso: "registro" } });
+  check(r, { "registro 201": (x) => x.status === 201 });
+  return r.status === 201 ? r.json("token") : "";
+}
+
+// Registra `cuantos` clientes en lotes paralelos (antes de la prueba) y devuelve sus tokens.
+function registrarVarios(cuantos, etiqueta) {
+  const tokens = [];
+  for (let i = 0; i < cuantos; i += 8) {
+    const lote = [];
+    for (let j = i; j < Math.min(i + 8, cuantos); j++)
+      lote.push(["POST", `${BASE}/api/auth/registro`, JSON.stringify(datosRegistro(100000 + j, etiqueta)), cab(100000 + j)]);
+    for (const r of http.batch(lote)) tokens.push(r.status === 201 ? r.json("token") : "");
+  }
+  console.log(`${tokens.filter(Boolean).length}/${cuantos} clientes registrados para la prueba`);
+  return tokens;
 }
 
 export function setup() {
@@ -68,10 +87,11 @@ export function setup() {
   const limite = Date.now() + 30 * 60 * 1000;
   const normales = funciones.filter((f) => !f.evento && new Date(f.inicio).getTime() > limite);
   const datos = { normales: normales.map((f) => f.codigo), evento: (funciones.find((f) => f.evento) || {}).evento, objetivo: normales[0] && normales[0].codigo };
+  if (ESC === "compra" || ESC === "contencion" || ESC === "cola") {
+    // Los clientes se registran antes: la prueba mide sólo el choque simultáneo de compras o de la cola.
+    datos.tokens = registrarVarios(N || 300, ESC);
+  }
   if (ESC === "contencion" || ESC === "cola") {
-    // Los usuarios se crean antes: la prueba mide sólo el choque simultáneo.
-    datos.usuarios = [];
-    for (let i = 1; i <= (N || 300); i++) datos.usuarios.push(registrar(100000 + i, ESC));
     // Una butaca que está libre justo antes del choque.
     for (const codigo of datos.normales.slice(20)) {
       const o = http.get(`${BASE}/api/funciones/${codigo}/asientos`).json();
@@ -89,15 +109,15 @@ export function setup() {
 export default function (d) {
   const n = __VU * 1000 + __ITER;
   if (ESC === "registro") {
-    const id = registrar(n, "r");
-    if (id) check(get(`/api/usuarios/${id}/cuenta`, n), { "cuenta 200": (x) => x.status === 200 });
+    const token = registrar(n, "r");
+    if (token) check(get("/api/cuenta", n, {}, token), { "bono de 800": (x) => x.status === 200 && x.json("saldo") === 800 });
     return;
   }
 
   if (ESC === "compra") {
     const inicio = Date.now();
-    const id = registrar(n, "c");
-    if (!id) return;
+    const token = d.tokens[__VU - 1];
+    if (!token) return;
     // Cada cliente intenta 2 butacas de una función al azar; si otra persona se le adelanta, prueba con otras.
     for (let intento = 0; intento < 3; intento++) {
       const f = d.normales[Math.floor(Math.random() * Math.min(d.normales.length, 40))];
@@ -112,20 +132,20 @@ export default function (d) {
       const asientos = [libres[k], libres[k + 1]];
       let ok = true;
       for (const a of asientos) {
-        const b = post(`/api/funciones/${f}/asientos/${a}/bloqueo`, { usuario_id: id }, n, { tags: { paso: "bloqueo" } });
+        const b = post(`/api/funciones/${f}/asientos/${a}/bloqueo`, undefined, n, { tags: { paso: "bloqueo" } }, token);
         if (b.status !== 201) ok = false;
       }
       if (!ok) {
-        post(`/api/funciones/${f}/bloqueos`, undefined, n);
+        anotar(http.del(`${BASE}/api/funciones/${f}/bloqueos`, JSON.stringify({ asientos }), cab(n, token)));
         conflictos.add(1);
         continue;
       }
-      const r = post("/api/reservas", { funcion: f, usuario_id: id, asientos }, n, { tags: { paso: "reserva" } });
+      const r = post("/api/reservas", { funcion: f, asientos }, n, { tags: { paso: "reserva" } }, token);
       if (r.status !== 201) {
         conflictos.add(1);
         continue;
       }
-      const p = post(`/api/reservas/${r.json("reserva_id")}/pagar`, undefined, n, { tags: { paso: "pago" } });
+      const p = post(`/api/reservas/${r.json("reserva_id")}/pagar`, undefined, n, { tags: { paso: "pago" } }, token);
       check(p, { "pago 201": (x) => x.status === 201, "2 boletos": (x) => x.status === 201 && x.json("boletos").length === 2, "saldo 800-2×precio": (x) => x.status === 201 && x.json("saldo") < 800 });
       if (p.status === 201) {
         pagados.add(1);
@@ -139,21 +159,21 @@ export default function (d) {
 
   if (ESC === "contencion") {
     // Todos a la vez por la MISMA butaca: sólo uno debe pagarla.
-    const id = d.usuarios[__VU - 1];
-    const r = post("/api/reservas", { funcion: d.objetivo, usuario_id: id, asientos: ["E-06"] }, 100000 + __VU, { tags: { paso: "reserva" } });
+    const token = d.tokens[__VU - 1];
+    const r = post("/api/reservas", { funcion: d.objetivo, asientos: ["E-06"] }, 100000 + __VU, { tags: { paso: "reserva" } }, token);
     if (r.status === 201) {
-      const p = post(`/api/reservas/${r.json("reserva_id")}/pagar`, undefined, 100000 + __VU, { tags: { paso: "pago" } });
+      const p = post(`/api/reservas/${r.json("reserva_id")}/pagar`, undefined, 100000 + __VU, { tags: { paso: "pago" } }, token);
       if (p.status === 201) pagados.add(1);
     } else if (r.status === 409) conflictos.add(1);
     return;
   }
 
   if (ESC === "cola") {
-    const id = d.usuarios[__VU - 1];
-    const r = post(`/api/cola/${d.evento}`, { usuario_id: id }, 100000 + __VU, { tags: { paso: "cola" } });
+    const token = d.tokens[__VU - 1];
+    const r = post(`/api/cola/${d.evento}`, {}, 100000 + __VU, { tags: { paso: "cola" } }, token);
     check(r, { "entra a la cola": (x) => x.status === 200 || x.status === 201 });
     sleep(2);
-    const pos = get(`/api/cola/${d.evento}/${id}`, 100000 + __VU);
+    const pos = get(`/api/cola/${d.evento}`, 100000 + __VU, {}, token);
     if (pos.status === 200 && pos.json("turno_habilitado")) pagados.add(1, { tipo: "turno" });
     return;
   }

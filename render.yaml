@@ -28,6 +28,10 @@ services:
         sync: false
       - key: RECAPTCHA_SECRET
         sync: false
+      - key: CLAVE_INICIAL_PERSONAL
+        sync: false
+      - key: QR_SECRET
+        generateValue: true
 
   - type: keyvalue
     name: cineight-redis

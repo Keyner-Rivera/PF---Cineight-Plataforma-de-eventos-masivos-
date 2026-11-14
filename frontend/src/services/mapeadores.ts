@@ -1,9 +1,9 @@
 // Conversión de las respuestas de la API en Go (snake_case) al modelo de la interfaz.
 
 import { api } from "./api";
-import type { BoletoApi, FuncionApi, MovimientoApi, PeliculaApi } from "@/types/api";
+import type { BoletoApi, FuncionApi, MovimientoApi, PeliculaApi, UsuarioApi } from "@/types/api";
 import type { Funcion, Pelicula } from "@/types/catalogo";
-import type { Boleto, Movimiento } from "@/types/cuenta";
+import type { Boleto, Movimiento, Usuario } from "@/types/cuenta";
 
 export const funcionDeApi = (f: FuncionApi): Funcion => ({
   id: f.codigo,
@@ -25,6 +25,7 @@ export const boletoDeApi = (b: BoletoApi, titular: string): Boleto => ({
   estado: ESTADO_BOLETO[b.estado],
   emitido: b.fecha,
   titular,
+  folio: b.reserva,
 });
 
 /** Función de un boleto, tal como la guarda PostgreSQL (puede estar terminada y ya no venir en GET /api/funciones). */
@@ -68,3 +69,6 @@ export const peliculaDeApi = (p: PeliculaApi): Pelicula => ({
   acento: "#2a0b0b",
   personalizada: true,
 });
+
+/** Usuario de la sesión tal como lo usa la interfaz. */
+export const usuarioDeApi = (u: UsuarioApi): Usuario => ({ id: u.id, nombre: u.nombre, correo: u.correo, rol: u.rol, debeCambiarClave: u.debe_cambiar_clave });

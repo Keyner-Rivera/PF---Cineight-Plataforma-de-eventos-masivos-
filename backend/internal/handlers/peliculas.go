@@ -27,6 +27,7 @@ func (a *API) crearPelicula(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, 400, "Solicitud inválida o imagen demasiado grande (máx. 2 MB).")
 		return
 	}
+	s.CreadaPor = sesion(r).Usuario.Correo
 	slug, codigos, err := a.s.Cartelera.Crear(r.Context(), s)
 	if err != nil {
 		fallar(w, err)

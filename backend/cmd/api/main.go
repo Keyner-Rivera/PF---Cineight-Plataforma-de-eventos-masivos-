@@ -18,6 +18,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"log"
 	"net"
@@ -75,31 +76,59 @@ func main() {
 	// Servicios
 	seguridad := services.NuevaSeguridad(recaptcha.Nuevo(cfg.RecaptchaKey, cfg.RecaptchaMin), rd, rd, pg)
 	cola := services.NuevaCola(rd, seguridad, pg, rd, cfg.ColaCapacidad, cfg.ColaTurno)
-	asientos := services.NuevoAsientos(pg, rd, cola, cfg.Retencion)
+	asientos := services.NuevoAsientos(pg, rd, pg, cola, cfg.Retencion)
 	cartelera := services.NuevaCartelera(pg, pg, rd, cfg.CacheCartelera)
+	reservas := services.NuevoReservas(asientos, pg, rd, pg, pg, cfg.Retencion)
+	auth := services.NuevaAutenticacion(pg, seguridad, pg)
+	// Secreto de los QR: sin QR_SECRET se genera uno por arranque (los códigos duran 1 min y el teléfono los vuelve a
+	// pedir, así que reiniciar la API sólo obliga a reabrir la entrada). Con varias instancias hay que definirlo.
+	secretoQR := cfg.SecretoQR
+	if len(secretoQR) < 32 {
+		secretoQR = make([]byte, 32)
+		_, _ = rand.Read(secretoQR)
+		log.Printf("seguridad: QR_SECRET no definido (o con menos de 32 caracteres): se usa uno aleatorio en esta instancia")
+	}
 	srv := handlers.Servicios{
 		Asientos:  asientos,
-		Reservas:  services.NuevoReservas(asientos, pg, rd, pg, cfg.Retencion),
-		Cuentas:   services.NuevoCuentas(pg, pg, pg, seguridad),
+		Reservas:  reservas,
+		Cuentas:   services.NuevoCuentas(pg, pg, pg, secretoQR),
 		Cola:      cola,
 		Panel:     services.NuevoPanel(pg, rd, rd),
 		Seguridad: seguridad,
 		Cartelera: cartelera,
 		Butacas:   services.NuevoButacas(pg, asientos, pg, cartelera.InvalidarCartelera),
+		Auth:      auth,
 	}
 
 	// Una sola suscripción de Redis reparte los cambios de butacas entre todos los mapas abiertos de esta instancia.
 	go rd.IniciarDifusion(ctx)
 	// Los vencimientos de Redis (TTL) se difunden como "liberado" a los mapas abiertos.
 	go asientos.EscucharExpiraciones(ctx)
+	// Las retenciones vencidas de la base (selecciones y reservas no pagadas) se liberan solas.
+	go reservas.MantenerRetenciones(ctx)
 	// Hoy y los próximos días siempre tienen funciones, aunque la base de datos se haya creado hace días.
 	go services.NuevaProgramacion(pg, cartelera.InvalidarCartelera).Mantener(ctx)
+	// Contraseña inicial del personal (bases anteriores a la autenticación en el servidor). Espera a la migración.
+	go func() {
+		for ctx.Err() == nil {
+			if err := auth.PrepararPersonal(ctx, cfg.ClavePersonal); err == nil {
+				return
+			}
+			select {
+			case <-ctx.Done():
+			case <-time.After(5 * time.Second):
+			}
+		}
+	}()
 
 	origenes := httpx.ListaOrigenes(cfg.OrigenesCORS)
 	servidor := &http.Server{
 		Addr:              ":" + cfg.Puerto,
-		Handler:           handlers.NuevoRouter(srv, handlers.Limites{Sensible: cfg.RateLimit, Interactivo: cfg.RateLimitAlto}, origenes),
+		Handler:           handlers.NuevoRouter(srv, handlers.Limites{Sensible: cfg.RateLimit, Interactivo: cfg.RateLimitAlto, Acceso: cfg.RateLimitAcceso}, origenes),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second, // cuerpos lentos (slowloris) no retienen conexiones
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 		// Sin WriteTimeout: las conexiones SSE permanecen abiertas. Sus contextos derivan de ctx,
 		// así que al recibir SIGTERM se cierran y Shutdown no queda esperándolas.
 		BaseContext: func(net.Listener) context.Context { return ctx },
